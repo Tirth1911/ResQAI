@@ -29,8 +29,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         await ensure_indexes()
         logger.info("Database indexes checked.")
+        from app.seed import seed
+        await seed()
+        logger.info("Database seed checked/applied.")
     except Exception as exc:
-        logger.warning("Failed to ensure MongoDB indexes at startup: %s", exc)
+        logger.warning("Failed to ensure MongoDB indexes or seed at startup: %s", exc)
 
     yield
 

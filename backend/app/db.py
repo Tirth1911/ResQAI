@@ -7,28 +7,52 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from app.config import settings
 
-# Global async Mongo client instance
+import asyncio
+
+# Global async Mongo client instance and its associated event loop
 _client: Optional[AsyncMongoClient] = None
+_client_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def get_client() -> AsyncMongoClient:
-    """Return the global AsyncMongoClient instance, initializing if needed."""
-    global _client
+    """Return the global AsyncMongoClient instance, binding to the current event loop."""
+    global _client, _client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    needs_new = False
     if _client is None:
+        needs_new = True
+    elif current_loop is not None:
+        client_internal_loop = getattr(_client, "_loop", None)
+        if client_internal_loop is not None and client_internal_loop != current_loop:
+            needs_new = True
+        elif _client_loop is not None and _client_loop != current_loop:
+            needs_new = True
+
+    if needs_new:
         _client = AsyncMongoClient(
             settings.MONGODB_URI,
             tz_aware=True,
             serverSelectionTimeoutMS=5000,
         )
+        _client_loop = current_loop
+
     return _client
 
 
 async def close_client() -> None:
     """Close the global AsyncMongoClient connection."""
-    global _client
+    global _client, _client_loop
     if _client is not None:
-        await _client.close()
+        try:
+            await _client.close()
+        except Exception:
+            pass
         _client = None
+        _client_loop = None
 
 
 def get_db(db_name: Optional[str] = None) -> AsyncDatabase:
@@ -124,10 +148,41 @@ def serialize_doc(doc: Any) -> Any:
     return doc
 
 
-async def ensure_indexes() -> None:
+async def ensure_indexes(db_name: Optional[str] = None) -> None:
     """
-    Ensure all required indexes are created in MongoDB.
-    Stub implementation for Step 1.
+    Ensure all required indexes are created in MongoDB idempotently.
+    - incidents: 2dsphere on location; (status, priority); created_at desc; (type, created_at desc)
+    - resources: 2dsphere on location; (kind, status)
+    - assignments: incident_id; resource_id; status
+    - alerts: (incident_id, type, created_at desc); acknowledged
+    - notifications: created_at desc
     """
-    # 2dsphere and unique indexes will be registered here idempotently
-    pass
+    db = get_db(db_name)
+
+    # incidents collection indexes
+    incidents = db["incidents"]
+    await incidents.create_index([("location", "2dsphere")])
+    await incidents.create_index([("status", 1), ("priority", 1)])
+    await incidents.create_index([("created_at", -1)])
+    await incidents.create_index([("type", 1), ("created_at", -1)])
+
+    # resources collection indexes
+    resources = db["resources"]
+    await resources.create_index([("location", "2dsphere")])
+    await resources.create_index([("kind", 1), ("status", 1)])
+
+    # assignments collection indexes
+    assignments = db["assignments"]
+    await assignments.create_index([("incident_id", 1)])
+    await assignments.create_index([("resource_id", 1)])
+    await assignments.create_index([("status", 1)])
+
+    # alerts collection indexes
+    alerts = db["alerts"]
+    await alerts.create_index([("incident_id", 1), ("type", 1), ("created_at", -1)])
+    await alerts.create_index([("acknowledged", 1)])
+
+    # notifications collection indexes
+    notifications = db["notifications"]
+    await notifications.create_index([("created_at", -1)])
+
