@@ -22,9 +22,15 @@ from app.models import (
     SEVERITY_PRIORITY_MAP,
 )
 from app.schemas import (
+    AssignmentOut,
+    AssignmentStatusUpdate,
+    DispatchRequest,
+    DispatchResponse,
     IncidentDetailOut,
     IncidentOut,
     IncidentStatusUpdate,
+    RecommendationItem,
+    RecommendationsOut,
     ReportIn,
     ReportOut,
     ReportResponse,
@@ -35,8 +41,10 @@ from app.schemas import (
     doc_to_resource_out,
 )
 from app.services.dedup import find_duplicate
+from app.services.geo import haversine_km
 from app.services.ingest import normalize_report
 from app.services.realtime import broadcast
+from app.services.recommend import get_recommendations
 from app.services.triage import triage
 
 logger = logging.getLogger("resqai.incidents")
@@ -412,3 +420,193 @@ async def list_resources(
     cursor = resources_col.find(query).sort("name", 1)
 
     return [doc_to_resource_out(doc) async for doc in cursor]
+
+
+# ==============================================================================
+# Recommendations & Dispatch Endpoints
+# ==============================================================================
+
+@router.get("/incidents/{id}/recommendations", response_model=RecommendationsOut)
+async def get_incident_recommendations(id: str) -> RecommendationsOut:
+    """
+    Get ranked resource recommendations for an incident using MongoDB $geoNear.
+    """
+    inc_oid = parse_object_id(id)
+    db = get_db()
+    incident = await db["incidents"].find_one({"_id": inc_oid})
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{id}' not found",
+        )
+    return await get_recommendations(db, incident)
+
+
+@router.post("/incidents/{id}/dispatch", response_model=DispatchResponse)
+async def dispatch_resources(id: str, req: DispatchRequest) -> DispatchResponse:
+    """
+    Dispatch recommended or chosen resources to an incident atomically.
+    Prevents double dispatch with atomic find_one_and_update.
+    """
+    inc_oid = parse_object_id(id)
+    db = get_db()
+    incident = await db["incidents"].find_one({"_id": inc_oid})
+    if not incident:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{id}' not found",
+        )
+
+    coords = incident["location"]["coordinates"]
+    inc_lat, inc_lng = float(coords[1]), float(coords[0])
+
+    # Determine target resource IDs
+    target_rids: list[str] = []
+    if req.auto:
+        recs = await get_recommendations(db, incident)
+        target_rids = [u.resource.id for u in recs.units]
+    elif req.resource_ids:
+        target_rids = req.resource_ids
+
+    now = datetime.now(timezone.utc)
+    created_assignments: list[AssignmentOut] = []
+    skipped_rids: list[str] = []
+
+    for rid_str in target_rids:
+        if not ObjectId.is_valid(rid_str):
+            skipped_rids.append(rid_str)
+            continue
+        rid = ObjectId(rid_str)
+
+        # ATOMIC claim: only claims if status is available
+        claimed = await db["resources"].find_one_and_update(
+            {"_id": rid, "status": ResourceStatus.AVAILABLE},
+            {"$set": {"status": ResourceStatus.ASSIGNED, "updated_at": now}},
+            return_document=True,
+        )
+
+        if claimed is None:
+            # Another dispatcher took this unit or unavailable
+            skipped_rids.append(rid_str)
+            continue
+
+        res_coords = claimed["location"]["coordinates"]
+        dist_km = haversine_km(inc_lat, inc_lng, float(res_coords[1]), float(res_coords[0]))
+        eta_min = round((dist_km / 40.0) * 60.0 + 2.0, 1)
+
+        asg_doc: dict[str, Any] = {
+            "_id": ObjectId(),
+            "incident_id": inc_oid,
+            "resource_id": rid,
+            "status": AssignmentStatus.ASSIGNED,
+            "score": 0.95,
+            "distance_km": round(dist_km, 2),
+            "eta_min": eta_min,
+            "assigned_at": now,
+            "updated_at": now,
+            "completed_at": None,
+        }
+
+        await db["assignments"].insert_one(asg_doc)
+        asg_out = doc_to_assignment_out(asg_doc, resource_doc=claimed)
+        created_assignments.append(asg_out)
+
+        # Realtime broadcasts
+        await broadcast("resource_updated", doc_to_resource_out(claimed).model_dump(mode="json"))
+        await broadcast("assignment_updated", asg_out.model_dump(mode="json"))
+
+    # Update incident status to dispatched if any units were dispatched
+    if created_assignments and incident["status"] in (IncidentStatus.NEW, IncidentStatus.TRIAGED):
+        incident = await db["incidents"].find_one_and_update(
+            {"_id": inc_oid},
+            {"$set": {"status": IncidentStatus.DISPATCHED, "updated_at": now}},
+            return_document=True,
+        )
+        await broadcast("incident_updated", doc_to_incident_out(incident).model_dump(mode="json"))
+
+    return DispatchResponse(
+        incident=doc_to_incident_out(incident),
+        assignments=created_assignments,
+        skipped=skipped_rids,
+    )
+
+
+@router.patch("/assignments/{id}/status", response_model=AssignmentOut)
+async def update_assignment_status(id: str, update: AssignmentStatusUpdate) -> AssignmentOut:
+    """
+    Update assignment lifecycle status and sync resource & incident statuses.
+    - assigned -> en_route -> on_scene -> completed
+    - Resource status moves to en_route, on_scene, or available (when completed)
+    - Incident moves to en_route or on_scene accordingly
+    """
+    asg_oid = parse_object_id(id)
+    db = get_db()
+    asg = await db["assignments"].find_one({"_id": asg_oid})
+    if not asg:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assignment '{id}' not found",
+        )
+
+    now = datetime.now(timezone.utc)
+    target_status = update.status
+    inc_oid = asg["incident_id"]
+    res_oid = asg["resource_id"]
+
+    set_fields: dict[str, Any] = {
+        "status": target_status,
+        "updated_at": now,
+    }
+    if target_status == AssignmentStatus.COMPLETED:
+        set_fields["completed_at"] = now
+
+    updated_asg = await db["assignments"].find_one_and_update(
+        {"_id": asg_oid},
+        {"$set": set_fields},
+        return_document=True,
+    )
+
+    # Sync resource status
+    if target_status == AssignmentStatus.EN_ROUTE:
+        await db["resources"].update_one(
+            {"_id": res_oid},
+            {"$set": {"status": ResourceStatus.EN_ROUTE, "updated_at": now}},
+        )
+    elif target_status == AssignmentStatus.ON_SCENE:
+        await db["resources"].update_one(
+            {"_id": res_oid},
+            {"$set": {"status": ResourceStatus.ON_SCENE, "updated_at": now}},
+        )
+    elif target_status in (AssignmentStatus.COMPLETED, AssignmentStatus.CANCELLED):
+        await db["resources"].update_one(
+            {"_id": res_oid},
+            {"$set": {"status": ResourceStatus.AVAILABLE, "updated_at": now}},
+        )
+
+    # Sync incident status (does NOT auto-resolve on complete)
+    inc_doc = await db["incidents"].find_one({"_id": inc_oid})
+    if inc_doc and inc_doc["status"] != IncidentStatus.RESOLVED:
+        if target_status == AssignmentStatus.ON_SCENE:
+            inc_doc = await db["incidents"].find_one_and_update(
+                {"_id": inc_oid},
+                {"$set": {"status": IncidentStatus.ON_SCENE, "updated_at": now}},
+                return_document=True,
+            )
+        elif target_status == AssignmentStatus.EN_ROUTE and inc_doc["status"] != IncidentStatus.ON_SCENE:
+            inc_doc = await db["incidents"].find_one_and_update(
+                {"_id": inc_oid},
+                {"$set": {"status": IncidentStatus.EN_ROUTE, "updated_at": now}},
+                return_document=True,
+            )
+
+    res_doc = await db["resources"].find_one({"_id": res_oid})
+    asg_out = doc_to_assignment_out(updated_asg, resource_doc=res_doc)
+
+    await broadcast("assignment_updated", asg_out.model_dump(mode="json"))
+    if res_doc:
+        await broadcast("resource_updated", doc_to_resource_out(res_doc).model_dump(mode="json"))
+    if inc_doc:
+        await broadcast("incident_updated", doc_to_incident_out(inc_doc).model_dump(mode="json"))
+
+    return asg_out
+

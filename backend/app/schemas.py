@@ -154,6 +154,41 @@ class AssignmentOut(BaseModel):
     resource: Optional[ResourceSummary] = None
 
 
+class AssignmentStatusUpdate(BaseModel):
+    status: AssignmentStatus
+
+
+# ==============================================================================
+# Recommendation & Dispatch Schemas
+# ==============================================================================
+
+class RecommendationItem(BaseModel):
+    resource: ResourceOut
+    score: float
+    distance_km: float
+    eta_min: float
+    reason: str
+
+
+class RecommendationsOut(BaseModel):
+    units: list[RecommendationItem]
+    hospital: Optional[ResourceOut] = None
+    relief_camp: Optional[ResourceOut] = None
+    shortage: bool = False
+    shortage_detail: Optional[str] = None
+
+
+class DispatchRequest(BaseModel):
+    resource_ids: Optional[list[str]] = None
+    auto: bool = False
+
+
+class DispatchResponse(BaseModel):
+    incident: IncidentOut
+    assignments: list[AssignmentOut]
+    skipped: list[str] = Field(default_factory=list)
+
+
 # ==============================================================================
 # Alert & Notification Schemas
 # ==============================================================================
