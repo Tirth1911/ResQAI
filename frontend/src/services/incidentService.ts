@@ -50,11 +50,11 @@ export const incidentService = {
   },
 
   async getActiveIncidents(limit: number = 50): Promise<IncidentPaginatedResponse> {
-    return fetchApi<IncidentPaginatedResponse>(`/incidents/active?limit=${limit}`);
+    return this.getIncidents({ limit });
   },
 
   async getCriticalIncidents(limit: number = 20): Promise<IncidentPaginatedResponse> {
-    return fetchApi<IncidentPaginatedResponse>(`/incidents/critical?limit=${limit}`);
+    return this.getIncidents({ severity: 'CRITICAL', limit });
   },
 
   async getIncidentById(incidentId: string): Promise<Incident> {
@@ -155,4 +155,16 @@ export const incidentService = {
   async getStats(): Promise<IncidentStats> {
     return fetchApi<IncidentStats>(`/incidents/stats`);
   },
+
+  async getBriefing(): Promise<{
+    timestamp: string;
+    total_active_incidents: number;
+    severity_counts: Record<string, number>;
+    available_resources: number;
+    top_priority_incidents: any[];
+    briefing_narrative: string;
+  }> {
+    return fetchApi('/briefing');
+  },
 };
+

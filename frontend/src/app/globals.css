@@ -106,3 +106,22 @@ body {
   animation: pulse-ring 2.0s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
   pointer-events: none;
 }
+
+@keyframes new-incident-highlight {
+  0% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.6);
+    background-color: rgba(254, 226, 226, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.3);
+    background-color: rgba(254, 242, 242, 0.6);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+.new-incident-anim {
+  animation: new-incident-highlight 3s ease-out;
+}
+
