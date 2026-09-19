@@ -16,7 +16,7 @@ logger = logging.getLogger("resqai.main")
 
 
 import asyncio
-from backend.app.routers import incidents_router
+from backend.app.routers import incidents_router, analytics_router
 from backend.app.routers.alerts import router as alerts_router
 from backend.app.services.alerts import evaluate_delayed_and_escalation_checks
 
@@ -70,10 +70,13 @@ app.include_router(incidents_router, prefix="/api", tags=["Ingestion & Incident 
 app.include_router(incidents_router, prefix=settings.API_V1_STR, tags=["Ingestion & Incident API"])
 app.include_router(alerts_router, prefix="/api", tags=["Alerts & Notifications API"])
 app.include_router(alerts_router, prefix=settings.API_V1_STR, tags=["Alerts & Notifications API"])
+app.include_router(analytics_router, prefix="/api", tags=["Analytics API"])
+app.include_router(analytics_router, prefix=settings.API_V1_STR, tags=["Analytics API"])
 
 # Mount Legacy REST API Routes under /api/v1 and /api
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(api_router, prefix="/api")
+
 
 
 
