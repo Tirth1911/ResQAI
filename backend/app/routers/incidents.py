@@ -33,6 +33,7 @@ from app.schemas import (
 )
 from app.services.ingest import normalize_report
 from app.services.realtime import broadcast
+from app.services.triage import triage
 
 logger = logging.getLogger("resqai.incidents")
 
@@ -69,7 +70,7 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
     Pipeline:
     1) Normalize via services/ingest.py
     2) Deduplication hook (Step 5: for now always creates a new incident)
-    3) Triage hook (Step 4: for now type=other, severity=medium)
+    3) Triage hook (Step 4: AI triage with rules fallback)
     4) Insert incident document with embedded report
     5) Broadcast incident_created event
     """
@@ -91,26 +92,28 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
         "reported_at": reported_at,
     }
 
-    # Default triage for Step 3 (hooks for Step 4 & 5 will refine this)
-    incident_type = IncidentType.OTHER
-    incident_severity = IncidentSeverity.MEDIUM
-    priority = SEVERITY_PRIORITY_MAP[incident_severity]
+    # 4. Triage classification (LLM with rule-based fallback)
+    triage_result = await triage(
+        text=normalized_text,
+        source=report_in.source.value,
+        extra=report_in.extra,
+    )
 
     incident_doc: dict[str, Any] = {
         "title": title,
         "description": normalized_text,
-        "type": incident_type,
-        "severity": incident_severity,
-        "priority": priority,
-        "status": IncidentStatus.NEW,
+        "type": triage_result.type,
+        "severity": triage_result.severity,
+        "priority": triage_result.priority,
+        "status": IncidentStatus.TRIAGED,
         "location": geo_location,
         "address": report_in.address,
         "source": report_in.source,
         "report_count": 1,
         "reports": [report_doc],
-        "ai_confidence": None,
-        "ai_reasoning": None,
-        "classified_by": "rules",
+        "ai_confidence": triage_result.confidence,
+        "ai_reasoning": triage_result.reasoning,
+        "classified_by": triage_result.classified_by,
         "ai_assist": None,
         "created_at": now,
         "updated_at": now,
