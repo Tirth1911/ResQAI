@@ -262,7 +262,7 @@ def doc_to_incident_out(doc: dict[str, Any]) -> IncidentOut:
         lat=float(lat),
         lng=float(lng),
         address=serialized.get("address"),
-        source=serialized["source"],
+        source=serialized.get("source", ReportSource.CITIZEN),
         report_count=serialized.get("report_count", 1),
         reports=reports_data,
         ai_confidence=serialized.get("ai_confidence"),

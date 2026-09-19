@@ -4,6 +4,7 @@ from typing import Any, Optional
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, status
 
+from app.config import settings
 from app.db import (
     get_assignments_collection,
     get_db,
@@ -12,6 +13,8 @@ from app.db import (
     to_geojson,
 )
 from app.models import (
+    AlertLevel,
+    AlertType,
     AssignmentStatus,
     IncidentSeverity,
     IncidentStatus,
@@ -22,6 +25,7 @@ from app.models import (
     SEVERITY_PRIORITY_MAP,
 )
 from app.schemas import (
+    AlertOut,
     AssignmentOut,
     AssignmentStatusUpdate,
     DispatchRequest,
@@ -29,17 +33,21 @@ from app.schemas import (
     IncidentDetailOut,
     IncidentOut,
     IncidentStatusUpdate,
+    NotificationOut,
     RecommendationItem,
     RecommendationsOut,
     ReportIn,
     ReportOut,
     ReportResponse,
     ResourceOut,
+    doc_to_alert_out,
     doc_to_assignment_out,
     doc_to_incident_out,
+    doc_to_notification_out,
     doc_to_report_out,
     doc_to_resource_out,
 )
+from app.services.alerts import create_alert, run_alert_checks
 from app.services.dedup import find_duplicate
 from app.services.geo import haversine_km
 from app.services.ingest import normalize_report
@@ -145,6 +153,19 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
             update_ops["$set"]["severity"] = bumped_sev
             update_ops["$set"]["priority"] = bumped_pri
 
+            if bumped_sev == IncidentSeverity.CRITICAL:
+                await create_alert(
+                    db,
+                    type=AlertType.CRITICAL_INCIDENT,
+                    level=AlertLevel.CRITICAL,
+                    incident_id=target_incident["_id"],
+                    message=(
+                        f"CRITICAL ESCALATION: Multiple caller reports ({new_count}) "
+                        f"elevated '{target_incident.get('title')}' to CRITICAL severity."
+                    ),
+                    now=now,
+                )
+
         updated_doc = await db["incidents"].find_one_and_update(
             {"_id": target_incident["_id"]},
             update_ops,
@@ -192,6 +213,17 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
     incidents_col = get_incidents_collection()
     res = await incidents_col.insert_one(incident_doc)
     incident_doc["_id"] = res.inserted_id
+
+    # If critical severity, trigger critical_incident alert immediately
+    if triage_result.severity == IncidentSeverity.CRITICAL:
+        await create_alert(
+            db,
+            type=AlertType.CRITICAL_INCIDENT,
+            level=AlertLevel.CRITICAL,
+            incident_id=res.inserted_id,
+            message=f"CRITICAL INCIDENT ALERT: {title} reported. Immediate deployment required.",
+            now=now,
+        )
 
     # Broadcast real-time creation event
     incident_out = doc_to_incident_out(incident_doc)
@@ -439,7 +471,19 @@ async def get_incident_recommendations(id: str) -> RecommendationsOut:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Incident '{id}' not found",
         )
-    return await get_recommendations(db, incident)
+    recs = await get_recommendations(db, incident)
+
+    # Trigger resource shortage alert if units are below required quota
+    if recs.shortage:
+        await create_alert(
+            db,
+            type=AlertType.RESOURCE_SHORTAGE,
+            level=AlertLevel.WARNING,
+            incident_id=inc_oid,
+            message=recs.shortage_detail or f"Resource shortage detected for incident '{incident.get('title')}'.",
+        )
+
+    return recs
 
 
 @router.post("/incidents/{id}/dispatch", response_model=DispatchResponse)
@@ -609,4 +653,80 @@ async def update_assignment_status(id: str, update: AssignmentStatusUpdate) -> A
         await broadcast("incident_updated", doc_to_incident_out(inc_doc).model_dump(mode="json"))
 
     return asg_out
+
+
+# ==============================================================================
+# Alerts & Notifications Endpoints
+# ==============================================================================
+
+@router.get("/alerts", response_model=list[AlertOut])
+async def list_alerts(acknowledged: Optional[bool] = None) -> list[AlertOut]:
+    """
+    List emergency system alerts with optional acknowledged filter.
+    Sorted by created_at descending.
+    """
+    db = get_db()
+    query: dict[str, Any] = {}
+    if acknowledged is not None:
+        query["acknowledged"] = acknowledged
+
+    cursor = db["alerts"].find(query).sort("created_at", -1).limit(100)
+    return [doc_to_alert_out(doc) async for doc in cursor]
+
+
+@router.post("/alerts/{id}/ack", response_model=AlertOut)
+async def acknowledge_alert(id: str) -> AlertOut:
+    """
+    Acknowledge an active alert by ID.
+    """
+    alert_oid = parse_object_id(id)
+    db = get_db()
+    now = datetime.now(timezone.utc)
+
+    doc = await db["alerts"].find_one_and_update(
+        {"_id": alert_oid},
+        {"$set": {"acknowledged": True, "acknowledged_at": now}},
+        return_document=True,
+    )
+
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Alert '{id}' not found",
+        )
+
+    return doc_to_alert_out(doc)
+
+
+@router.get("/notifications", response_model=list[NotificationOut])
+async def list_notifications() -> list[NotificationOut]:
+    """
+    List recent multi-channel notifications (latest 100).
+    Sorted by created_at descending.
+    """
+    db = get_db()
+    cursor = db["notifications"].find({}).sort("created_at", -1).limit(100)
+    return [doc_to_notification_out(doc) async for doc in cursor]
+
+
+@router.post("/dev/tick")
+async def dev_tick() -> dict[str, Any]:
+    """
+    Development & Demonstration trigger: runs delayed and escalation checks immediately.
+    Only permitted when DEMO_MODE=true.
+    """
+    if not settings.DEMO_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dev tick endpoint is only enabled when DEMO_MODE=true",
+        )
+
+    db = get_db()
+    alerts = await run_alert_checks(db)
+    return {
+        "status": "ok",
+        "alerts_created": len(alerts),
+        "demo_time_scale": settings.DEMO_TIME_SCALE,
+    }
+
 
