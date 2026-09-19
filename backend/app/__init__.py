@@ -1,1 +1,0 @@
-"""ResQAI backend application package."""
