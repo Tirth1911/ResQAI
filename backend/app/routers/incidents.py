@@ -1,3 +1,4 @@
+import asyncio
 from enum import Enum
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timezone
@@ -10,6 +11,7 @@ from backend.app.services.ingest import normalize_report_text
 from backend.app.services.triage import triage, map_severity_to_priority
 from backend.app.services.dedup import find_duplicate
 from backend.app.services.recommend import recommend_resources_for_incident
+from backend.app.services.assist import generate_incident_assistance, get_overall_briefing
 from backend.app.services.realtime import broadcast_incident_created
 
 router = APIRouter()
@@ -74,6 +76,18 @@ def bump_severity_level(current_severity: str) -> Tuple[str, str]:
     else:
         new_sev = "medium"
     return new_sev, map_severity_to_priority(new_sev)
+
+
+# -----------------------------------------------------------------------------
+# 0. GET /api/briefing - Overall Situation Briefing
+# -----------------------------------------------------------------------------
+@router.get(
+    "/briefing",
+    summary="Get Overall Situation Briefing",
+    description="Retrieve command briefing narrative, active counts by severity, top priority cases, and resource readiness."
+)
+async def get_command_briefing():
+    return await get_overall_briefing(db.db)
 
 
 # -----------------------------------------------------------------------------
@@ -151,6 +165,9 @@ async def create_report(report_in: ReportIn):
         await db.incidents.update_one({"_id": inc_id}, update_doc)
         updated_master = await db.incidents.find_one({"_id": inc_id})
 
+        # Auto-regenerate AI assistance on merge
+        asyncio.create_task(generate_incident_assistance(db.db, updated_master))
+
         return {
             "merged": True,
             "incident_id": str(inc_id),
@@ -192,6 +209,9 @@ async def create_report(report_in: ReportIn):
 
     await db.incidents.insert_one(incident_doc)
     await broadcast_incident_created(incident_doc)
+
+    # Auto-generate AI assistance in background task
+    asyncio.create_task(generate_incident_assistance(db.db, incident_doc))
 
     formatted_inc = format_incident_doc(incident_doc)
     return {
@@ -337,7 +357,39 @@ async def dispatch_incident_resources(id: str, body: DispatchIn):
 
 
 # -----------------------------------------------------------------------------
-# 5. GET /api/incidents/{id} - Get Detailed Incident by ID
+# 5. POST & GET /api/incidents/{id}/assist - AI Incident Assistance
+# -----------------------------------------------------------------------------
+@router.post(
+    "/incidents/{id}/assist",
+    summary="Generate AI Assistance for Incident",
+    description="Generate AI situation summary, threat assessment, recommended control room actions, and field guidance."
+)
+async def trigger_incident_assist(id: str):
+    filter_q = validate_and_parse_id(id)
+    incident = await db.incidents.find_one(filter_q)
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    return await generate_incident_assistance(db.db, incident)
+
+
+@router.get(
+    "/incidents/{id}/assist",
+    summary="Get Cached AI Assistance for Incident",
+    description="Retrieve cached AI situation summary and tactical guidance."
+)
+async def get_incident_assist(id: str):
+    filter_q = validate_and_parse_id(id)
+    incident = await db.incidents.find_one(filter_q)
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    ai_assist = incident.get("ai_assist")
+    if not ai_assist:
+        ai_assist = await generate_incident_assistance(db.db, incident)
+    return ai_assist
+
+
+# -----------------------------------------------------------------------------
+# 6. GET /api/incidents/{id} - Get Detailed Incident by ID
 # -----------------------------------------------------------------------------
 @router.get(
     "/incidents/{id}",
@@ -392,7 +444,7 @@ async def get_incident_by_id(id: str):
 
 
 # -----------------------------------------------------------------------------
-# 6. GET /api/incidents/{id}/reports - List Merged Reports for Incident
+# 7. GET /api/incidents/{id}/reports - List Merged Reports for Incident
 # -----------------------------------------------------------------------------
 @router.get(
     "/incidents/{id}/reports",
@@ -409,7 +461,7 @@ async def get_incident_reports(id: str):
 
 
 # -----------------------------------------------------------------------------
-# 7. PATCH /api/incidents/{id}/status - Transition Incident Status
+# 8. PATCH /api/incidents/{id}/status - Transition Incident Status
 # -----------------------------------------------------------------------------
 ALLOWED_TRANSITIONS = {
     "new": ["triaged", "resolved"],
@@ -481,7 +533,7 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
 
 
 # -----------------------------------------------------------------------------
-# 8. PATCH /api/assignments/{id}/status - Sync Assignment, Resource & Incident Status
+# 9. PATCH /api/assignments/{id}/status - Sync Assignment, Resource & Incident Status
 # -----------------------------------------------------------------------------
 @router.patch(
     "/assignments/{id}/status",
@@ -510,7 +562,6 @@ async def update_assignment_status(id: str, body: StatusUpdateIn):
     inc_id = asgn.get("incident_id")
     res_id = asgn.get("resource_id")
 
-    # Sync Resource Status
     if res_id:
         r_query = {"$or": [{"resource_id": res_id}, {"_id": ObjectId(res_id) if ObjectId.is_valid(res_id) else res_id}]}
         if new_status == "completed":
@@ -518,7 +569,6 @@ async def update_assignment_status(id: str, body: StatusUpdateIn):
         elif new_status in ["en_route", "on_scene"]:
             await db.resources.update_one(r_query, {"$set": {"status": new_status, "updated_at": now_dt}})
 
-    # Sync Incident Status (en_route when any assignment is en_route, on_scene when any is on_scene)
     if inc_id and new_status in ["en_route", "on_scene"]:
         inc_query = validate_and_parse_id(inc_id)
         inc_doc = await db.incidents.find_one(inc_query)
@@ -532,7 +582,7 @@ async def update_assignment_status(id: str, body: StatusUpdateIn):
 
 
 # -----------------------------------------------------------------------------
-# 9. GET /api/resources - List Resources with Location (lat/lng)
+# 10. GET /api/resources - List Resources with Location (lat/lng)
 # -----------------------------------------------------------------------------
 @router.get(
     "/resources",
