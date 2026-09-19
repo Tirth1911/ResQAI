@@ -54,6 +54,7 @@ class ReportOut(BaseModel):
 class ReportResponse(BaseModel):
     incident_id: str
     merged: bool = False
+    duplicate_score: Optional[float] = None
     incident: "IncidentOut"
 
 

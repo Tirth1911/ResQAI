@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.db import (
     get_assignments_collection,
+    get_db,
     get_incidents_collection,
     get_resources_collection,
     to_geojson,
@@ -25,12 +26,15 @@ from app.schemas import (
     IncidentOut,
     IncidentStatusUpdate,
     ReportIn,
+    ReportOut,
     ReportResponse,
     ResourceOut,
     doc_to_assignment_out,
     doc_to_incident_out,
+    doc_to_report_out,
     doc_to_resource_out,
 )
+from app.services.dedup import find_duplicate
 from app.services.ingest import normalize_report
 from app.services.realtime import broadcast
 from app.services.triage import triage
@@ -46,6 +50,14 @@ ALLOWED_SEQUENTIAL_TRANSITIONS: dict[IncidentStatus, IncidentStatus] = {
     IncidentStatus.DISPATCHED: IncidentStatus.EN_ROUTE,
     IncidentStatus.EN_ROUTE: IncidentStatus.ON_SCENE,
     IncidentStatus.ON_SCENE: IncidentStatus.RESOLVED,
+}
+
+# Severity escalation hierarchy for duplicate report thresholds
+SEVERITY_BUMP: dict[IncidentSeverity, IncidentSeverity] = {
+    IncidentSeverity.LOW: IncidentSeverity.MEDIUM,
+    IncidentSeverity.MEDIUM: IncidentSeverity.HIGH,
+    IncidentSeverity.HIGH: IncidentSeverity.CRITICAL,
+    IncidentSeverity.CRITICAL: IncidentSeverity.CRITICAL,
 }
 
 
@@ -69,10 +81,11 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
     Ingest multi-source emergency report.
     Pipeline:
     1) Normalize via services/ingest.py
-    2) Deduplication hook (Step 5: for now always creates a new incident)
-    3) Triage hook (Step 4: AI triage with rules fallback)
-    4) Insert incident document with embedded report
-    5) Broadcast incident_created event
+    2) Triage classification (LLM with rule-based fallback)
+    3) Deduplication check against active nearby incidents
+    4) If duplicate: atomic merge into existing incident ($push, $inc, severity bump if count=3,6)
+    5) Otherwise: insert new incident document with embedded report
+    6) Broadcast realtime event (incident_merged or incident_created)
     """
     now = datetime.now(timezone.utc)
     reported_at = report_in.reported_at or now
@@ -99,6 +112,54 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
         extra=report_in.extra,
     )
 
+    # 5. Deduplication Check
+    db = get_db()
+    dup_match = await find_duplicate(db, report_in, triage_result)
+
+    if dup_match is not None:
+        target_incident, dup_score = dup_match
+        current_count = target_incident.get("report_count", len(target_incident.get("reports", [])))
+        new_count = current_count + 1
+
+        update_ops: dict[str, Any] = {
+            "$push": {"reports": report_doc},
+            "$inc": {"report_count": 1},
+            "$set": {
+                "updated_at": now,
+            },
+        }
+
+        # Severity escalation when report_count crosses 3 and 6
+        if new_count in (3, 6):
+            current_sev = IncidentSeverity(target_incident["severity"])
+            bumped_sev = SEVERITY_BUMP[current_sev]
+            bumped_pri = SEVERITY_PRIORITY_MAP[bumped_sev]
+            update_ops["$set"]["severity"] = bumped_sev
+            update_ops["$set"]["priority"] = bumped_pri
+
+        updated_doc = await db["incidents"].find_one_and_update(
+            {"_id": target_incident["_id"]},
+            update_ops,
+            return_document=True,
+        )
+
+        incident_out = doc_to_incident_out(updated_doc)
+        await broadcast(
+            "incident_merged",
+            {
+                "incident": incident_out.model_dump(mode="json"),
+                "duplicate_score": dup_score,
+            },
+        )
+
+        return ReportResponse(
+            incident_id=str(target_incident["_id"]),
+            merged=True,
+            duplicate_score=dup_score,
+            incident=incident_out,
+        )
+
+    # If not a duplicate, create a new incident
     incident_doc: dict[str, Any] = {
         "title": title,
         "description": normalized_text,
@@ -124,13 +185,14 @@ async def create_report(report_in: ReportIn) -> ReportResponse:
     res = await incidents_col.insert_one(incident_doc)
     incident_doc["_id"] = res.inserted_id
 
-    # 5. Broadcast real-time event
+    # Broadcast real-time creation event
     incident_out = doc_to_incident_out(incident_doc)
     await broadcast("incident_created", incident_out.model_dump(mode="json"))
 
     return ReportResponse(
         incident_id=str(res.inserted_id),
         merged=False,
+        duplicate_score=None,
         incident=incident_out,
     )
 
@@ -208,6 +270,24 @@ async def get_incident(id: str) -> IncidentDetailOut:
         **base_incident.model_dump(),
         assignments=assignments_out,
     )
+
+
+@router.get("/incidents/{id}/reports", response_model=list[ReportOut])
+async def list_incident_reports(id: str) -> list[ReportOut]:
+    """
+    List all reports merged into this incident.
+    """
+    inc_oid = parse_object_id(id)
+    incidents_col = get_incidents_collection()
+    doc = await incidents_col.find_one({"_id": inc_oid})
+
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Incident '{id}' not found",
+        )
+
+    return [doc_to_report_out(r) for r in doc.get("reports", [])]
 
 
 @router.patch("/incidents/{id}/status", response_model=IncidentOut)
