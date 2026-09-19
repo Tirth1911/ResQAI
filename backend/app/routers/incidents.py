@@ -9,6 +9,7 @@ from backend.app.db import db
 from backend.app.services.ingest import normalize_report_text
 from backend.app.services.triage import triage, map_severity_to_priority
 from backend.app.services.dedup import find_duplicate
+from backend.app.services.recommend import recommend_resources_for_incident
 from backend.app.services.realtime import broadcast_incident_created
 
 router = APIRouter()
@@ -38,6 +39,11 @@ class StatusUpdateIn(BaseModel):
     status: str
 
 
+class DispatchIn(BaseModel):
+    resource_ids: Optional[List[str]] = Field(default_factory=list)
+    auto: bool = False
+
+
 def validate_and_parse_id(id_str: str) -> Dict[str, Any]:
     """Helper to validate ObjectId or incident_id string and construct query filter without throwing 500."""
     if ObjectId.is_valid(id_str):
@@ -46,7 +52,9 @@ def validate_and_parse_id(id_str: str) -> Dict[str, Any]:
 
 
 def format_incident_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Format MongoDB incident document for API output."""
+    """Format MongoDB document for API output."""
+    if not doc:
+        return {}
     res = dict(doc)
     if "_id" in res:
         res["id"] = str(res["_id"])
@@ -78,7 +86,6 @@ def bump_severity_level(current_severity: str) -> Tuple[str, str]:
     description="Ingest emergency report, normalize text, perform AI triage, deduplicate against active incidents, and create or merge."
 )
 async def create_report(report_in: ReportIn):
-    # Step 1: Normalize via services/ingest.py
     norm_text = normalize_report_text(
         source=report_in.source.value,
         text=report_in.text,
@@ -106,22 +113,19 @@ async def create_report(report_in: ReportIn):
         "extra": report_in.extra or {}
     }
 
-    # Step 2: Perform AI / Rules Triage
     triage_res = await triage(
         text=norm_text,
         source=report_in.source.value,
         extra=report_in.extra
     )
 
-    # Step 3: Check Duplicate Match
     dup_match = await find_duplicate(
-        db=db,
+        db=db.db,
         new_report=report_embedded,
         triage_result=triage_res
     )
 
     if dup_match:
-        # MERGE PATH
         master_inc, dup_score = dup_match
         inc_id = master_inc["_id"]
 
@@ -133,7 +137,6 @@ async def create_report(report_in: ReportIn):
             "report_count": new_count
         }
 
-        # Bump severity when crossing 3 or 6 reports
         if new_count in [3, 6]:
             curr_sev = master_inc.get("severity", triage_res.severity)
             new_sev, new_prio = bump_severity_level(curr_sev)
@@ -155,11 +158,9 @@ async def create_report(report_in: ReportIn):
             "incident": format_incident_doc(updated_master)
         }
 
-    # CREATE NEW INCIDENT PATH
     inc_obj_id = ObjectId()
     inc_code = f"INC-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
-    # Store individual report in reports collection
     await db.reports.insert_one({"_id": ObjectId(), "incident_id": inc_code, **report_embedded})
 
     incident_doc = {
@@ -235,7 +236,108 @@ async def get_incidents(
 
 
 # -----------------------------------------------------------------------------
-# 3. GET /api/incidents/{id} - Get Detailed Incident by ID
+# 3. GET /api/incidents/{id}/recommendations - Get Resource Recommendations
+# -----------------------------------------------------------------------------
+@router.get(
+    "/incidents/{id}/recommendations",
+    summary="Get Resource Recommendations",
+    description="Ranked recommendations ($geoNear) for units, nearest hospital, relief camp, and shortage detection."
+)
+async def get_incident_recommendations(id: str):
+    filter_q = validate_and_parse_id(id)
+    incident = await db.incidents.find_one(filter_q)
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    return await recommend_resources_for_incident(db.db, incident)
+
+
+# -----------------------------------------------------------------------------
+# 4. POST /api/incidents/{id}/dispatch - Dispatch Resources to Incident
+# -----------------------------------------------------------------------------
+@router.post(
+    "/incidents/{id}/dispatch",
+    summary="Dispatch Resources to Incident",
+    description="Atomically claims available units, creates assignments, updates incident status to dispatched."
+)
+async def dispatch_incident_resources(id: str, body: DispatchIn):
+    filter_q = validate_and_parse_id(id)
+    incident = await db.incidents.find_one(filter_q)
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    target_rids = body.resource_ids or []
+    if body.auto or not target_rids:
+        recs = await recommend_resources_for_incident(db.db, incident)
+        recommended_units = recs.get("units", [])
+        target_rids = [u["resource_id"] for u in recommended_units]
+
+    dispatched = []
+    unclaimed = []
+    now_dt = datetime.now(timezone.utc)
+    inc_code = incident.get("incident_id")
+    inc_obj_id = incident.get("_id")
+
+    for rid in target_rids:
+        query_r = {
+            "$or": [{"resource_id": rid}, {"_id": ObjectId(rid) if ObjectId.is_valid(rid) else rid}],
+            "status": {"$in": ["available", "AVAILABLE"]}
+        }
+        update_r = {
+            "$set": {
+                "status": "assigned",
+                "current_incident_id": str(inc_code or inc_obj_id),
+                "updated_at": now_dt
+            }
+        }
+
+        claimed = await db.resources.find_one_and_update(query_r, update_r, return_document=True)
+        if not claimed:
+            unclaimed.append(rid)
+            continue
+
+        r_code = claimed.get("resource_id", str(claimed["_id"]))
+        asgn_doc = {
+            "_id": ObjectId(),
+            "assignment_id": f"ASG-{int(now_dt.timestamp() * 1000)}",
+            "incident_id": str(inc_code or inc_obj_id),
+            "resource_id": r_code,
+            "resource_name": claimed.get("name") or claimed.get("resource_name") or r_code,
+            "kind": claimed.get("kind") or claimed.get("category"),
+            "status": "assigned",
+            "assigned_at": now_dt,
+            "completed": False,
+            "completed_at": None
+        }
+
+        await db.assignments.insert_one(asgn_doc)
+        dispatched.append(format_incident_doc(claimed))
+
+    if dispatched:
+        dispatched_codes = [d.get("resource_id", d.get("id")) for d in dispatched]
+        await db.incidents.update_one(
+            {"_id": incident["_id"]},
+            {
+                "$set": {
+                    "status": "dispatched",
+                    "updated_at": now_dt
+                },
+                "$addToSet": {
+                    "assigned_resources": {"$each": dispatched_codes}
+                }
+            }
+        )
+
+    updated_inc = await db.incidents.find_one({"_id": incident["_id"]})
+    return {
+        "dispatched": dispatched,
+        "unclaimed": unclaimed,
+        "incident": format_incident_doc(updated_inc)
+    }
+
+
+# -----------------------------------------------------------------------------
+# 5. GET /api/incidents/{id} - Get Detailed Incident by ID
 # -----------------------------------------------------------------------------
 @router.get(
     "/incidents/{id}",
@@ -251,7 +353,6 @@ async def get_incident_by_id(id: str):
     inc_code = incident.get("incident_id")
     inc_obj_id = incident.get("_id")
 
-    # Join assignments
     assignments = await db.assignments.find({
         "$or": [{"incident_id": inc_code}, {"incident_id": str(inc_obj_id)}]
     }).to_list(100)
@@ -291,7 +392,7 @@ async def get_incident_by_id(id: str):
 
 
 # -----------------------------------------------------------------------------
-# 4. GET /api/incidents/{id}/reports - List Merged Reports for Incident
+# 6. GET /api/incidents/{id}/reports - List Merged Reports for Incident
 # -----------------------------------------------------------------------------
 @router.get(
     "/incidents/{id}/reports",
@@ -308,7 +409,7 @@ async def get_incident_reports(id: str):
 
 
 # -----------------------------------------------------------------------------
-# 5. PATCH /api/incidents/{id}/status - Transition Incident Status
+# 7. PATCH /api/incidents/{id}/status - Transition Incident Status
 # -----------------------------------------------------------------------------
 ALLOWED_TRANSITIONS = {
     "new": ["triaged", "resolved"],
@@ -380,7 +481,58 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
 
 
 # -----------------------------------------------------------------------------
-# 6. GET /api/resources - List Resources with Location (lat/lng)
+# 8. PATCH /api/assignments/{id}/status - Sync Assignment, Resource & Incident Status
+# -----------------------------------------------------------------------------
+@router.patch(
+    "/assignments/{id}/status",
+    summary="Update Assignment Status",
+    description="Syncs assignment (assigned->en_route->on_scene->completed), resource, and incident status."
+)
+async def update_assignment_status(id: str, body: StatusUpdateIn):
+    query_a = validate_and_parse_id(id)
+    if not ObjectId.is_valid(id):
+        query_a = {"$or": [{"assignment_id": id}, {"_id": id}]}
+
+    asgn = await db.assignments.find_one(query_a)
+    if not asgn:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Assignment not found")
+
+    new_status = body.status.lower().strip()
+    now_dt = datetime.now(timezone.utc)
+
+    update_fields: Dict[str, Any] = {"status": new_status}
+    if new_status == "completed":
+        update_fields["completed"] = True
+        update_fields["completed_at"] = now_dt
+
+    await db.assignments.update_one({"_id": asgn["_id"]}, {"$set": update_fields})
+
+    inc_id = asgn.get("incident_id")
+    res_id = asgn.get("resource_id")
+
+    # Sync Resource Status
+    if res_id:
+        r_query = {"$or": [{"resource_id": res_id}, {"_id": ObjectId(res_id) if ObjectId.is_valid(res_id) else res_id}]}
+        if new_status == "completed":
+            await db.resources.update_one(r_query, {"$set": {"status": "available", "current_incident_id": None, "updated_at": now_dt}})
+        elif new_status in ["en_route", "on_scene"]:
+            await db.resources.update_one(r_query, {"$set": {"status": new_status, "updated_at": now_dt}})
+
+    # Sync Incident Status (en_route when any assignment is en_route, on_scene when any is on_scene)
+    if inc_id and new_status in ["en_route", "on_scene"]:
+        inc_query = validate_and_parse_id(inc_id)
+        inc_doc = await db.incidents.find_one(inc_query)
+        if inc_doc:
+            current_inc_status = str(inc_doc.get("status", "")).lower()
+            if new_status == "on_scene" or (new_status == "en_route" and current_inc_status != "on_scene"):
+                await db.incidents.update_one({"_id": inc_doc["_id"]}, {"$set": {"status": new_status, "updated_at": now_dt}})
+
+    updated_asgn = await db.assignments.find_one({"_id": asgn["_id"]})
+    return format_incident_doc(updated_asgn)
+
+
+# -----------------------------------------------------------------------------
+# 9. GET /api/resources - List Resources with Location (lat/lng)
 # -----------------------------------------------------------------------------
 @router.get(
     "/resources",
