@@ -22,6 +22,17 @@ from app.models import (
 # Report Schemas
 # ==============================================================================
 
+class ReportIn(BaseModel):
+    source: ReportSource
+    reporter: Optional[str] = None
+    text: str
+    lat: float
+    lng: float
+    address: Optional[str] = None
+    reported_at: Optional[datetime] = None
+    extra: Optional[dict[str, Any]] = None
+
+
 class ReportCreate(BaseModel):
     source: ReportSource = ReportSource.CITIZEN
     reporter: Optional[str] = None
@@ -38,6 +49,12 @@ class ReportOut(BaseModel):
     lat: float
     lng: float
     reported_at: datetime
+
+
+class ReportResponse(BaseModel):
+    incident_id: str
+    merged: bool = False
+    incident: "IncidentOut"
 
 
 # ==============================================================================
@@ -79,6 +96,14 @@ class IncidentOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     resolved_at: Optional[datetime] = None
+
+
+class IncidentDetailOut(IncidentOut):
+    assignments: list["AssignmentOut"] = Field(default_factory=list)
+
+
+class IncidentStatusUpdate(BaseModel):
+    status: IncidentStatus
 
 
 # ==============================================================================

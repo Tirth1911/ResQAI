@@ -63,6 +63,11 @@ app.add_middleware(
 )
 
 
+from app.routers.incidents import router as incidents_router
+
+app.include_router(incidents_router)
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint with real MongoDB ping."""
@@ -74,3 +79,4 @@ async def health_check() -> dict[str, str]:
     except Exception:
         db_status = "down"
     return {"status": "ok", "db": db_status}
+
