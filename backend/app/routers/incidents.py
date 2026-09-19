@@ -1,12 +1,14 @@
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field
 
 from backend.app.db import db
 from backend.app.services.ingest import normalize_report_text
+from backend.app.services.triage import triage, map_severity_to_priority
+from backend.app.services.dedup import find_duplicate
 from backend.app.services.realtime import broadcast_incident_created
 
 router = APIRouter()
@@ -52,14 +54,28 @@ def format_incident_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
     return res
 
 
+def bump_severity_level(current_severity: str) -> Tuple[str, str]:
+    """Bump severity level by 1 step (cap at critical) and return (new_severity, new_priority)."""
+    sev = str(current_severity).lower()
+    if sev in ["low"]:
+        new_sev = "medium"
+    elif sev in ["medium"]:
+        new_sev = "high"
+    elif sev in ["high", "critical"]:
+        new_sev = "critical"
+    else:
+        new_sev = "medium"
+    return new_sev, map_severity_to_priority(new_sev)
+
+
 # -----------------------------------------------------------------------------
-# 1. POST /api/reports - Ingest Multi-Source Emergency Report
+# 1. POST /api/reports - Ingest Multi-Source Emergency Report & AI Triage / Dedup
 # -----------------------------------------------------------------------------
 @router.post(
     "/reports",
     status_code=status.HTTP_201_CREATED,
-    summary="Ingest Emergency Report",
-    description="Ingest multi-source emergency report (call_911, iot_sensor, hospital, citizen, social_media, field_unit)"
+    summary="Ingest Emergency Report with AI Triage & Deduplication",
+    description="Ingest emergency report, normalize text, perform AI triage, deduplicate against active incidents, and create or merge."
 )
 async def create_report(report_in: ReportIn):
     # Step 1: Normalize via services/ingest.py
@@ -71,11 +87,6 @@ async def create_report(report_in: ReportIn):
         address=report_in.address,
         extra=report_in.extra
     )
-
-    # Step 2: Dedup hook (always create new incident for now)
-    # Step 3: Triage hook (type=other, severity=medium, priority=P3, status=new)
-    inc_obj_id = ObjectId()
-    inc_code = f"INC-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
 
     reported_dt = report_in.reported_at or datetime.now(timezone.utc)
     if reported_dt.tzinfo is None:
@@ -95,17 +106,70 @@ async def create_report(report_in: ReportIn):
         "extra": report_in.extra or {}
     }
 
-    # Store individual report document in reports collection
+    # Step 2: Perform AI / Rules Triage
+    triage_res = await triage(
+        text=norm_text,
+        source=report_in.source.value,
+        extra=report_in.extra
+    )
+
+    # Step 3: Check Duplicate Match
+    dup_match = await find_duplicate(
+        db=db,
+        new_report=report_embedded,
+        triage_result=triage_res
+    )
+
+    if dup_match:
+        # MERGE PATH
+        master_inc, dup_score = dup_match
+        inc_id = master_inc["_id"]
+
+        current_count = master_inc.get("report_count", len(master_inc.get("reports", [])))
+        new_count = current_count + 1
+
+        update_set: Dict[str, Any] = {
+            "updated_at": now_dt,
+            "report_count": new_count
+        }
+
+        # Bump severity when crossing 3 or 6 reports
+        if new_count in [3, 6]:
+            curr_sev = master_inc.get("severity", triage_res.severity)
+            new_sev, new_prio = bump_severity_level(curr_sev)
+            update_set["severity"] = new_sev
+            update_set["priority"] = new_prio
+
+        update_doc = {
+            "$push": {"reports": report_embedded},
+            "$set": update_set
+        }
+
+        await db.incidents.update_one({"_id": inc_id}, update_doc)
+        updated_master = await db.incidents.find_one({"_id": inc_id})
+
+        return {
+            "merged": True,
+            "incident_id": str(inc_id),
+            "duplicate_score": dup_score,
+            "incident": format_incident_doc(updated_master)
+        }
+
+    # CREATE NEW INCIDENT PATH
+    inc_obj_id = ObjectId()
+    inc_code = f"INC-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+
+    # Store individual report in reports collection
     await db.reports.insert_one({"_id": ObjectId(), "incident_id": inc_code, **report_embedded})
 
     incident_doc = {
         "_id": inc_obj_id,
         "incident_id": inc_code,
         "source": report_in.source.value,
-        "type": "other",
-        "severity": "medium",
-        "priority": "P3",
-        "status": "new",
+        "type": triage_res.type,
+        "severity": triage_res.severity,
+        "priority": triage_res.priority,
+        "status": "triaged",
         "title": norm_text[:80],
         "description": norm_text,
         "location": {
@@ -117,14 +181,15 @@ async def create_report(report_in: ReportIn):
         "created_at": now_dt,
         "updated_at": now_dt,
         "resolved_at": None,
+        "ai_confidence": triage_res.confidence,
+        "ai_reasoning": triage_res.reasoning,
+        "classified_by": triage_res.classified_by,
+        "report_count": 1,
         "reports": [report_embedded],
         "assignments": []
     }
 
-    # Step 4: Insert the incident document
     await db.incidents.insert_one(incident_doc)
-
-    # Step 5: Broadcast incident_created
     await broadcast_incident_created(incident_doc)
 
     formatted_inc = format_incident_doc(incident_doc)
@@ -191,7 +256,6 @@ async def get_incident_by_id(id: str):
         "$or": [{"incident_id": inc_code}, {"incident_id": str(inc_obj_id)}]
     }).to_list(100)
 
-    # Join resource info if assignments exist
     if assignments:
         res_ids = [a.get("resource_id") for a in assignments if a.get("resource_id")]
         resources = await db.resources.find({"resource_id": {"$in": res_ids}}).to_list(100)
@@ -206,7 +270,6 @@ async def get_incident_by_id(id: str):
                 a["kind"] = r_info.get("kind") or r_info.get("category")
                 a["status"] = r_info.get("status")
 
-    # Join reports if any standalone reports exist in db.reports
     reports = await db.reports.find({
         "$or": [{"incident_id": inc_code}, {"incident_id": str(inc_obj_id)}]
     }).to_list(100)
@@ -214,7 +277,6 @@ async def get_incident_by_id(id: str):
     for r in reports:
         r["_id"] = str(r["_id"])
 
-    # Merge reports list
     embedded_reports = incident.get("reports", [])
     if reports:
         for r in reports:
@@ -229,7 +291,24 @@ async def get_incident_by_id(id: str):
 
 
 # -----------------------------------------------------------------------------
-# 4. PATCH /api/incidents/{id}/status - Transition Incident Status
+# 4. GET /api/incidents/{id}/reports - List Merged Reports for Incident
+# -----------------------------------------------------------------------------
+@router.get(
+    "/incidents/{id}/reports",
+    summary="Get Merged Reports for Incident",
+    description="Retrieve all embedded/merged reports associated with an incident case."
+)
+async def get_incident_reports(id: str):
+    filter_q = validate_and_parse_id(id)
+    incident = await db.incidents.find_one(filter_q)
+    if not incident:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    return incident.get("reports", [])
+
+
+# -----------------------------------------------------------------------------
+# 5. PATCH /api/incidents/{id}/status - Transition Incident Status
 # -----------------------------------------------------------------------------
 ALLOWED_TRANSITIONS = {
     "new": ["triaged", "resolved"],
@@ -258,7 +337,6 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
     current_status = str(incident.get("status", "new")).lower()
     target_status = body.status.lower().strip()
 
-    # Validate transition
     valid_next = ALLOWED_TRANSITIONS.get(current_status, [])
     is_allowed = (target_status in valid_next) or (target_status == "resolved" and current_status in ACTIVE_STATES)
 
@@ -279,7 +357,6 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
         inc_code = incident.get("incident_id")
         inc_obj_id = incident.get("_id")
 
-        # Free assigned resources
         await db.resources.update_many(
             {"$or": [{"current_incident_id": inc_code}, {"current_incident_id": str(inc_obj_id)}]},
             {"$set": {"status": "available", "current_incident_id": None}}
@@ -292,7 +369,6 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
                 {"$set": {"status": "available", "current_incident_id": None}}
             )
 
-        # Complete assignments
         await db.assignments.update_many(
             {"$or": [{"incident_id": inc_code}, {"incident_id": str(inc_obj_id)}]},
             {"$set": {"completed": True, "completed_at": now_dt}}
@@ -304,7 +380,7 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
 
 
 # -----------------------------------------------------------------------------
-# 5. GET /api/resources - List Resources with Location (lat/lng)
+# 6. GET /api/resources - List Resources with Location (lat/lng)
 # -----------------------------------------------------------------------------
 @router.get(
     "/resources",
@@ -333,7 +409,6 @@ async def get_resources(
     results = []
     for r in resources:
         res_item = format_incident_doc(r)
-        # Extract lat/lng
         lat = 0.0
         lng = 0.0
         if "location" in r and isinstance(r["location"], dict):
