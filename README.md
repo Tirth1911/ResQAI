@@ -52,19 +52,3 @@ ResQAI provides a centralized command platform that automates the emergency pipe
                          Storage: SQLite / PostgreSQLAI / 
                          NLP: LLM APIs (OpenAI / Groq) for structured triage extraction
 
-📂 Project StructurePlaintextResQAI/
-├── backend/               # FastAPI application
-│   ├── app/
-│   │   ├── main.py        # Entry point & WebSocket routes
-│   │   ├── triage.py      # AI parsing & severity classification
-│   │   └── dispatch.py    # Resource recommendation logic
-│   ├── seed_data.py       # Mock emergency data generator
-│   └── requirements.txt   # Python dependencies
-├── frontend/              # Next.js web application
-│   ├── src/
-│   │   ├── app/           # Pages, layouts, and route handlers
-│   │   └── components/    # Interactive map, alerts panel, triage cards
-│   ├── package.json       # Node.js dependencies
-│   └── tailwind.config.ts # Styling configurations
-└── README.md              # Project documentation
-
