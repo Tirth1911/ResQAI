@@ -36,6 +36,11 @@ class DatabaseProxy:
     def users(self) -> AsyncIOMotorCollection:
         return DatabaseManager.get_db().users
 
+    @property
+    def notifications(self) -> AsyncIOMotorCollection:
+        return DatabaseManager.get_db().notifications
+
+
 
 db = DatabaseProxy()
 

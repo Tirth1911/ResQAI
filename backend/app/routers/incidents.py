@@ -12,7 +12,11 @@ from backend.app.services.triage import triage, map_severity_to_priority
 from backend.app.services.dedup import find_duplicate
 from backend.app.services.recommend import recommend_resources_for_incident
 from backend.app.services.assist import generate_incident_assistance, get_overall_briefing
-from backend.app.services.realtime import broadcast_incident_created
+from backend.app.services.realtime import (
+    broadcast_incident_created,
+    broadcast_incident_updated,
+    broadcast_resource_assigned,
+)
 
 router = APIRouter()
 
@@ -347,8 +351,15 @@ async def dispatch_incident_resources(id: str, body: DispatchIn):
                 }
             }
         )
+        # Broadcast RESOURCE_ASSIGNED for each dispatched resource
+        inc_code_str = str(incident.get("incident_id") or incident["_id"])
+        for res_doc in dispatched:
+            await broadcast_resource_assigned(inc_code_str, res_doc)
 
     updated_inc = await db.incidents.find_one({"_id": incident["_id"]})
+    # Broadcast INCIDENT_UPDATED after dispatch
+    if updated_inc:
+        await broadcast_incident_updated(updated_inc)
     return {
         "dispatched": dispatched,
         "unclaimed": unclaimed,
@@ -529,6 +540,9 @@ async def update_incident_status(id: str, body: StatusUpdateIn):
 
     await db.incidents.update_one({"_id": incident["_id"]}, {"$set": update_fields})
     updated_doc = await db.incidents.find_one({"_id": incident["_id"]})
+    # Broadcast INCIDENT_UPDATED to all WebSocket clients
+    if updated_doc:
+        await broadcast_incident_updated(updated_doc)
     return format_incident_doc(updated_doc)
 
 

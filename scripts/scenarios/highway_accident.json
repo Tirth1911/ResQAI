@@ -1,0 +1,38 @@
+[
+  {
+    "delay_sec": 0,
+    "source": "citizen_call",
+    "reporter": "Highway Driver Vikram",
+    "text": "CRITICAL: Multi-vehicle pileup on Ahmedabad-Vadodara Expressway NE1 near Nadiad toll plaza! Bus and truck collided!",
+    "lat": 22.6912,
+    "lng": 72.8634,
+    "address": "Ahmedabad-Vadodara Expressway NE1 KM 45, Nadiad"
+  },
+  {
+    "delay_sec": 12,
+    "source": "citizen_call",
+    "reporter": "Commuter Neha",
+    "text": "Severe crash on Expressway near Nadiad. Passengers trapped inside overturned bus. Traffic blocked!",
+    "lat": 22.6918,
+    "lng": 72.8640,
+    "address": "NE1 Expressway Nadiad Bypass, Gujarat"
+  },
+  {
+    "delay_sec": 15,
+    "source": "call_center",
+    "reporter": "Highway Patrol Control Desk",
+    "text": "108 Emergency Control: Dispatching 3 ALS Ambulances to Expressway NE1 KM 45 pileup. 6 critical casualties reported.",
+    "lat": 22.6915,
+    "lng": 72.8637,
+    "address": "Expressway Control Room, Nadiad"
+  },
+  {
+    "delay_sec": 20,
+    "source": "field_team",
+    "reporter": "Nadiad Civil Hospital Emergency Center",
+    "text": "Hospital Trauma Alert: Red Alert declared. 8 incoming critical casualties from NE1 Expressway crash. Trauma bay cleared.",
+    "lat": 22.6900,
+    "lng": 72.8600,
+    "address": "Nadiad Civil Hospital Trauma Unit"
+  }
+]

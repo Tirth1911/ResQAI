@@ -1,0 +1,48 @@
+[
+  {
+    "delay_sec": 0,
+    "source": "iot_sensor",
+    "reporter": "IoT Smoke Detector #412",
+    "text": "CRITICAL: Heavy smoke and volatile chemical gas spike detected at Sanand GIDC Industrial Complex Block C Warehouse 4.",
+    "lat": 22.9860,
+    "lng": 72.3780,
+    "address": "Sanand GIDC Industrial Estate Block C, Gujarat",
+    "extra": {"sensor_id": "IOT-SMOKE-412", "ppm": 450}
+  },
+  {
+    "delay_sec": 15,
+    "source": "citizen_call",
+    "reporter": "Ramesh Patel",
+    "text": "Black toxic smoke pouring from chemical warehouse in Sanand GIDC, flames visible from highway!",
+    "lat": 22.9865,
+    "lng": 72.3785,
+    "address": "Sanand GIDC Plot 401, Gujarat"
+  },
+  {
+    "delay_sec": 15,
+    "source": "citizen_call",
+    "reporter": "Priya Shah",
+    "text": "Huge explosion heard near Sanand industrial area! Chemical plant building on fire!",
+    "lat": 22.9858,
+    "lng": 72.3778,
+    "address": "Sanand GIDC Sector C, Gujarat"
+  },
+  {
+    "delay_sec": 20,
+    "source": "call_center",
+    "reporter": "Emergency Dispatcher #12",
+    "text": "URGENT 911 dispatch update: At least 5 workers trapped inside Sanand GIDC solvent warehouse. Fire spreading rapidly to adjacent fuel storage tanks!",
+    "lat": 22.9862,
+    "lng": 72.3782,
+    "address": "Sanand GIDC Solvent Storage Facility, Gujarat"
+  },
+  {
+    "delay_sec": 20,
+    "source": "field_team",
+    "reporter": "Commander Fire Squad 1",
+    "text": "Fire Engine 01 on scene at Sanand GIDC fire. Multiple casualties requiring immediate trauma evacuation. Requesting secondary hazmat response!",
+    "lat": 22.9861,
+    "lng": 72.3781,
+    "address": "Sanand GIDC Block C Command Post, Gujarat"
+  }
+]

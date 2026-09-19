@@ -1,0 +1,56 @@
+[
+  {
+    "delay_sec": 0,
+    "source": "citizen_call",
+    "reporter": "Amit Varma",
+    "text": "Severe waterlogging near Vishwamitri River Bank. Water level entering ground floor houses in Sayajiganj.",
+    "lat": 22.3072,
+    "lng": 73.1812,
+    "address": "Sayajiganj Vishwamitri Bank, Vadodara"
+  },
+  {
+    "delay_sec": 10,
+    "source": "citizen_call",
+    "reporter": "Suresh Trivedi",
+    "text": "Flash flooding on Kalali Ring Road. Cars stranded under railway bridge in 4 feet of water.",
+    "lat": 22.2680,
+    "lng": 73.1610,
+    "address": "Kalali Underpass, Vadodara"
+  },
+  {
+    "delay_sec": 10,
+    "source": "citizen_call",
+    "reporter": "Kavita Joshi",
+    "text": "Storm drain overflow near Akota Stadium. Streets completely submerged, elderly residents trapped.",
+    "lat": 22.2960,
+    "lng": 73.1680,
+    "address": "Akota Main Road, Vadodara"
+  },
+  {
+    "delay_sec": 15,
+    "source": "citizen_call",
+    "reporter": "Deepak Mehta",
+    "text": "Submerged residential colony in Subhanpura. Requesting motorized boat evacuation assistance.",
+    "lat": 22.3210,
+    "lng": 73.1550,
+    "address": "Subhanpura Sector 3, Vadodara"
+  },
+  {
+    "delay_sec": 15,
+    "source": "call_center",
+    "reporter": "Gujarat Disaster Management Authority",
+    "text": "GOVERNMENT ALERT: Ajwa Dam discharge increased to 25,000 cusecs. Vishwamitri river overflow imminent for low-lying Vadodara sectors.",
+    "lat": 22.3100,
+    "lng": 73.1900,
+    "address": "Flood Control Room, Vadodara"
+  },
+  {
+    "delay_sec": 20,
+    "source": "field_team",
+    "reporter": "Vadodara General Hospital Desk",
+    "text": "Hospital Emergency Status Update: Prepared 30 extra emergency flood-relief beds and mobile trauma triage units.",
+    "lat": 22.3000,
+    "lng": 73.1800,
+    "address": "SSG Civil Hospital Emergency Wing, Vadodara"
+  }
+]

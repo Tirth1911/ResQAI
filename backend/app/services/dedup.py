@@ -114,12 +114,7 @@ async def find_duplicate(
         if dt_min > DEDUP_WINDOW_MIN:
             continue
 
-        # Condition 3: Same incident type (allow "other" to match any type)
-        cand_type = cand.get("type", "other")
-        if cand_type != new_type and cand_type != "other" and new_type != "other":
-            continue
-
-        # Condition 4: Text similarity >= DEDUP_SIM_THRESHOLD
+        # Condition 4: Text similarity >= adaptive threshold based on distance
         cand_texts = []
         if reports_list:
             for r in reports_list:
@@ -128,14 +123,42 @@ async def find_duplicate(
             cand_texts.append(cand.get("description", ""))
 
         sim = compute_text_similarity(new_text, cand_texts)
-        if sim < DEDUP_SIM_THRESHOLD:
+
+        # Condition 3: Same incident type or compatible emergency taxonomy
+        cand_type = str(cand.get("type", "other")).lower()
+        norm_new_type = str(new_type).lower()
+
+        COMPATIBLE_TYPES = [
+            {"fire", "industrial_hazard", "gas_leak", "other"},
+            {"medical_emergency", "road_accident", "other"},
+            {"flood", "building_collapse", "earthquake", "other"}
+        ]
+
+        type_match = (cand_type == norm_new_type) or (cand_type == "other") or (norm_new_type == "other")
+        if not type_match:
+            for group in COMPATIBLE_TYPES:
+                if cand_type in group and norm_new_type in group:
+                    type_match = True
+                    break
+
+        if not type_match and sim < 0.30:
+            continue
+
+        # Adaptive similarity threshold: closer distance requires lower text similarity
+        if dist <= 0.2:
+            min_sim = 0.05
+        elif dist <= 0.5:
+            min_sim = 0.10
+        else:
+            min_sim = DEDUP_SIM_THRESHOLD
+
+        if sim < min_sim:
             continue
 
         # Combined Score Formula
-        # score = 0.4*(1 - dist/DEDUP_DISTANCE_KM) + 0.3*(1 - dt_min/DEDUP_WINDOW_MIN) + 0.3*similarity
         dist_factor = max(0.0, 1.0 - (dist / DEDUP_DISTANCE_KM))
         time_factor = max(0.0, 1.0 - (dt_min / DEDUP_WINDOW_MIN))
-        combined_score = 0.4 * dist_factor + 0.3 * time_factor + 0.3 * sim
+        combined_score = 0.4 * dist_factor + 0.3 * time_factor + 0.3 * max(sim, min_sim)
 
         if combined_score > best_score:
             best_score = combined_score
