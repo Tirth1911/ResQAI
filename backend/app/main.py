@@ -15,15 +15,37 @@ logging.basicConfig(
 logger = logging.getLogger("resqai.main")
 
 
+import asyncio
+from backend.app.routers import incidents_router
+from backend.app.routers.alerts import router as alerts_router
+from backend.app.services.alerts import evaluate_delayed_and_escalation_checks
+
+async def background_alert_monitor():
+    while True:
+        try:
+            await asyncio.sleep(30)
+            db_inst = DatabaseManager.get_db()
+            if db_inst is not None:
+                await evaluate_delayed_and_escalation_checks(db_inst)
+        except asyncio.CancelledError:
+            break
+        except Exception as err:
+            logger.warning(f"Background alert monitor error: {err}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup & shutdown lifecycle hooks."""
     logger.info("Starting ResQAI backend service...")
     await DatabaseManager.connect_to_mongo()
+    monitor_task = asyncio.create_task(background_alert_monitor())
     yield
     logger.info("Shutting down ResQAI backend service...")
+    monitor_task.cancel()
+    try:
+        await monitor_task
+    except asyncio.CancelledError:
+        pass
     await DatabaseManager.close_mongo_connection()
-
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -34,8 +56,6 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-from backend.app.routers import incidents_router
-
 # CORS Middleware configuration
 app.add_middleware(
     CORSMiddleware,
@@ -45,9 +65,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount REST API Ingestion Router under /api and /api/v1
+# Mount REST API Routers under /api and /api/v1
 app.include_router(incidents_router, prefix="/api", tags=["Ingestion & Incident API"])
 app.include_router(incidents_router, prefix=settings.API_V1_STR, tags=["Ingestion & Incident API"])
+app.include_router(alerts_router, prefix="/api", tags=["Alerts & Notifications API"])
+app.include_router(alerts_router, prefix=settings.API_V1_STR, tags=["Alerts & Notifications API"])
 
 # Mount Legacy REST API Routes under /api/v1 and /api
 app.include_router(api_router, prefix=settings.API_V1_STR)
