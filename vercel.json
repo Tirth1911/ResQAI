@@ -1,15 +1,5 @@
 {
   "version": 2,
-  "services": {
-    "frontend": {
-      "root": "frontend",
-      "framework": "nextjs"
-    },
-    "backend": {
-      "root": "backend",
-      "entrypoint": "app/main.py"
-    }
-  },
   "builds": [
     {
       "src": "frontend/package.json",
