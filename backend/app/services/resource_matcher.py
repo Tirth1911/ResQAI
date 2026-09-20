@@ -68,6 +68,8 @@ class ResourceRecommendation(BaseModel):
     reason: str
     status: str
     capacity: int
+    eta_min: Optional[float] = None
+    location_name: Optional[str] = None
 
 
 class IncidentRecommendationsResponse(BaseModel):
@@ -240,6 +242,10 @@ class ResourceMatcher:
             else:
                 reason = f"Responder is currently {status.lower()} at {dist_km} km distance; recommended for secondary staging."
 
+            # ETA estimation: ~35 km/h urban emergency response speed
+            est_eta_min = max(2.0, round((dist_km / 35.0) * 60.0, 1))
+            loc_address = res.get("location", {}).get("address") or f"Sector Command ({category.title()})"
+
             candidates.append(ResourceRecommendation(
                 resource_id=res_id,
                 name=res_name,
@@ -250,7 +256,9 @@ class ResourceMatcher:
                 score=final_score,
                 reason=reason,
                 status=status,
-                capacity=capacity
+                capacity=capacity,
+                eta_min=est_eta_min,
+                location_name=loc_address
             ))
 
         # Sort descending by score

@@ -75,10 +75,13 @@ body {
   }
 }
 
-.marker-pulse-critical {
+
+.marker-pulse-critical,
+.inc-pulse-critical {
   position: relative;
 }
-.marker-pulse-critical::after {
+.marker-pulse-critical::after,
+.inc-pulse-critical::after {
   content: '';
   position: absolute;
   top: -6px;
@@ -91,10 +94,12 @@ body {
   pointer-events: none;
 }
 
-.marker-pulse-high {
+.marker-pulse-high,
+.inc-pulse-high {
   position: relative;
 }
-.marker-pulse-high::after {
+.marker-pulse-high::after,
+.inc-pulse-high::after {
   content: '';
   position: absolute;
   top: -6px;
@@ -125,3 +130,9 @@ body {
   animation: new-incident-highlight 3s ease-out;
 }
 
+/* Custom Leaflet marker container — no background box */
+.custom-incident-marker,
+.custom-resource-marker {
+  background: transparent !important;
+  border: none !important;
+}

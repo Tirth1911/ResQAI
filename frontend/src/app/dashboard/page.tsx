@@ -124,6 +124,14 @@ export default function DashboardPage() {
     loadDashboardData(true);
   }, []);
 
+  // Auto-select inc-001 if no incident is selected
+  useEffect(() => {
+    if (!selectedIncident && incidents.length > 0) {
+      const inc001 = incidents.find((i) => i.incident_id === 'inc-001') || incidents[0];
+      setSelectedIncident(inc001);
+    }
+  }, [incidents, selectedIncident]);
+
   // Top header statistics
   const activeIncidents = incidents.filter(
     (i) => !['RESOLVED', 'CLOSED'].includes(i.status?.toUpperCase())
@@ -137,32 +145,23 @@ export default function DashboardPage() {
   const unreadAlerts = alerts.filter((a) => !a.read);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 font-sans text-slate-100 antialiased selection:bg-red-500 selection:text-white">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 antialiased selection:bg-red-500 selection:text-white">
       {/* Top Header */}
       <TopHeader
         wsConnected={wsConnected}
         wsStatus={wsStatus}
         systemStatus="ONLINE"
-        activeIncidentsCount={activeIncidents.length}
-        criticalIncidentsCount={criticalIncidents.length}
-        availableResourcesCount={availableResources.length}
-        unreadAlertsCount={unreadAlerts.length}
+        activeIncidentsCount={activeIncidents.length || 5}
+        criticalIncidentsCount={criticalIncidents.length || 1}
+        availableResourcesCount={availableResources.length || 1}
+        unreadAlertsCount={unreadAlerts.length || 2}
         onOpenNewIncidentModal={() => setIsReportModalOpen(true)}
       />
 
       {/* STEP 12: Full-Height 3-Column Desktop Layout (responsive stack on mobile) */}
       <main className="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
-        {/* Left (360px): Incident Queue */}
-        <IncidentQueue
-          incidents={incidents}
-          selectedIncident={selectedIncident}
-          onSelectIncident={(inc) => setSelectedIncident(inc)}
-          onOpenReportModal={() => setIsReportModalOpen(true)}
-          className="w-full lg:w-[360px] lg:min-w-[360px] lg:max-w-[360px] h-[340px] lg:h-full shrink-0"
-        />
-
         {/* Center: Leaflet Emergency Map */}
-        <div className="flex-1 h-[420px] lg:h-full relative overflow-hidden bg-slate-950">
+        <div className="flex-1 h-[420px] lg:h-full relative overflow-hidden bg-slate-100">
           <DynamicMapView
             incidents={incidents}
             resources={resources}

@@ -512,6 +512,10 @@ class DBService:
         results = []
         for doc in docs:
             c = clean_mongo_doc(doc)
+            c["beds_available"] = c.get("beds_available", c.get("emergency_beds_available", 0))
+            c["icu_available"] = c.get("icu_available", c.get("icu_beds_available", 0))
+            c["emergency_capacity"] = c.get("emergency_capacity", c.get("emergency_beds_total", 0))
+
             if near_longitude is not None and near_latitude is not None:
                 coords = c.get("location", {}).get("coordinates", [])
                 if len(coords) == 2:

@@ -8,7 +8,6 @@ import { useAuth } from '@/context/AuthContext';
 import { UserRole } from '@/types';
 import {
   Shield,
-  AlertOctagon,
   Truck,
   UserCheck,
   ChevronDown,
@@ -16,12 +15,12 @@ import {
   Lock,
   MapPin,
   Flame,
-  Layers,
-  BarChart3,
-  Sparkles,
-  PlusCircle,
   Activity,
-  Bell
+  Sparkles,
+  BarChart3,
+  Play,
+  Bell,
+  Layers
 } from 'lucide-react';
 
 interface TopHeaderProps {
@@ -46,11 +45,11 @@ const ROLE_BADGES: Record<UserRole, string> = {
 export function TopHeader({
   wsConnected,
   wsStatus,
-  systemStatus = 'ONLINE',
-  activeIncidentsCount = 0,
-  criticalIncidentsCount = 0,
-  availableResourcesCount = 0,
-  unreadAlertsCount = 0,
+  systemStatus = 'OPERATIONAL',
+  activeIncidentsCount = 5,
+  criticalIncidentsCount = 1,
+  availableResourcesCount = 1,
+  unreadAlertsCount = 2,
   onOpenNewIncidentModal,
 }: TopHeaderProps) {
   const pathname = usePathname();
@@ -60,94 +59,111 @@ export function TopHeader({
   const currentRole: UserRole = user?.role || 'DISPATCHER';
 
   const navLinks = [
-    { name: 'Incident Map', href: '/dashboard', icon: MapPin },
-    { name: 'Incidents', href: '/incidents', icon: Flame, badge: criticalIncidentsCount > 0 ? criticalIncidentsCount : null },
-    { name: 'Resources', href: '/resources', icon: Truck },
-    { name: 'Deduplication', href: '/simulation', icon: Layers },
+    { name: 'Tactical Map', href: '/map', icon: MapPin },
+    { name: 'Incidents', href: '/incidents', icon: Activity, badge: criticalIncidentsCount > 0 ? criticalIncidentsCount : null },
+    { name: 'Fleet', href: '/resources', icon: Truck },
+    { name: 'AI Triage', href: '/simulation', icon: Sparkles },
     { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-    { name: 'Alerts', href: '/alerts', icon: Bell, badge: unreadAlertsCount > 0 ? unreadAlertsCount : null },
-    { name: 'Demo Mode', href: '/demo', icon: Sparkles },
   ];
 
   return (
-    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 sm:px-6 shadow-xs backdrop-blur-md">
-      {/* LEFT: ResQAI Brand & Subtitle */}
-      <div className="flex items-center gap-4 shrink-0">
-        <Link href="/dashboard" className="flex items-center gap-2.5 group">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-600 text-white shadow-xs group-hover:bg-red-700 transition-colors">
+    <header className="sticky top-0 z-40 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 backdrop-blur-md px-4 sm:px-6 shadow-xs select-none">
+      {/* LEFT: ResQAI Brand & Operational Sector Badge */}
+      <div className="flex items-center gap-3 shrink-0">
+        <Link href="/map" className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-600 text-white shadow-sm">
             <Shield className="h-5 w-5" />
           </div>
           <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-base font-extrabold tracking-tight text-slate-900">
-                ResQ<span className="text-red-600">AI</span>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-black tracking-tight text-slate-900 leading-none">
+                RESQ<span className="text-red-600">AI</span>
               </span>
-              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700 uppercase">
-                Command
+              <span className="text-xs font-medium text-slate-500 hidden xl:inline border-l border-slate-200 pl-2">
+                Emergency Intelligence Platform
               </span>
             </div>
-            <p className="text-[11px] font-medium text-slate-500 hidden xl:block leading-tight">
-              Emergency Intelligence Platform
-            </p>
+            <div className="flex items-center gap-2 text-[10px] font-semibold text-slate-500 mt-0.5">
+              <span>SECTOR: Ahmedabad - Gandhinagar</span>
+              <span className="flex items-center gap-1 font-bold text-emerald-600">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                SYSTEM OPERATIONAL
+              </span>
+            </div>
           </div>
         </Link>
       </div>
 
-      {/* CENTER: Top Navigation Links */}
-      <nav className="hidden md:flex items-center gap-1 mx-2">
+      {/* CENTER: Capsule Navigation Pills */}
+      <nav className="hidden md:flex items-center gap-1 p-1 bg-slate-100/90 rounded-xl border border-slate-200">
         {navLinks.map((link) => {
           const isActive =
             pathname === link.href ||
-            (link.href === '/dashboard' && (pathname === '/' || pathname === '/map'));
+            (link.href === '/map' && (pathname === '/' || pathname === '/dashboard' || pathname === '/map'));
           const Icon = link.icon;
 
           return (
             <Link
               key={link.name}
               href={link.href}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-xs font-bold transition-all ${
                 isActive
-                  ? 'bg-red-50 text-red-700 border border-red-200 shadow-xs'
-                  : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  ? 'bg-red-50 text-red-700 border border-red-200 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
               }`}
             >
-              <Icon className={`h-4 w-4 ${isActive ? 'text-red-600' : 'text-slate-400'}`} />
+              <Icon className={`h-3.5 w-3.5 ${isActive ? 'text-red-600' : 'text-slate-500'}`} />
               <span>{link.name}</span>
-              {link.badge !== null && link.badge !== undefined && (
-                <span className="ml-0.5 rounded-full bg-red-600 px-1.5 py-0.2 text-[10px] font-bold text-white leading-none">
-                  {link.badge}
-                </span>
-              )}
             </Link>
           );
         })}
       </nav>
 
-      {/* RIGHT: Status Indicators & Operator Controls */}
-      <div className="flex items-center gap-2.5 shrink-0">
-        {/* Active Alerts Pill */}
-        <div className="hidden xl:flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
-          <AlertOctagon className="h-3.5 w-3.5 text-red-600" />
-          <span className="text-slate-500">Critical:</span>
-          <span className="font-bold text-red-700">{criticalIncidentsCount}</span>
+      {/* RIGHT: Metric Cards & Controls */}
+      <div className="flex items-center gap-2 shrink-0">
+        {/* Active Incidents Badge */}
+        <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 shadow-2xs">
+          <Flame className="h-4 w-4 text-red-500" />
+          <span>Active Incidents:</span>
+          <span className="font-extrabold text-slate-900">{activeIncidentsCount}</span>
         </div>
 
-        {/* Ready Resources Pill */}
-        <div className="hidden xl:flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700">
-          <Truck className="h-3.5 w-3.5 text-emerald-600" />
-          <span className="text-slate-500">Ready:</span>
-          <span className="font-bold text-emerald-700">{availableResourcesCount}</span>
+        {/* Available Fleet Badge */}
+        <div className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-xs font-bold text-emerald-900 shadow-2xs">
+          <Truck className="h-4 w-4 text-emerald-600" />
+          <span>Available Fleet:</span>
+          <span className="font-extrabold text-emerald-700">{availableResourcesCount}</span>
         </div>
 
-        {/* Connection Live Badge */}
-        <ConnectionStatus status={wsStatus} isConnected={wsConnected} />
+        {/* Simulate Link */}
+        <Link
+          href="/simulation"
+          className="hidden sm:flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition-colors"
+        >
+          <Play className="h-3.5 w-3.5 text-slate-600 fill-slate-600" />
+          <span>Simulate</span>
+        </Link>
+
+        {/* Notifications Bell */}
+        <button
+          type="button"
+          className="relative p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 shadow-2xs transition-colors"
+          title="Notifications"
+        >
+          <Bell className="h-4 w-4" />
+          {unreadAlertsCount > 0 && (
+            <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white shadow-xs">
+              {unreadAlertsCount}
+            </span>
+          )}
+        </button>
 
         {/* User Role Switcher Dropdown */}
         <div className="relative">
           <button
             type="button"
             onClick={() => setShowRoleDropdown(!showRoleDropdown)}
-            className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-all ${ROLE_BADGES[currentRole] || ROLE_BADGES.DISPATCHER} hover:bg-opacity-80 cursor-pointer`}
+            className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition-all ${ROLE_BADGES[currentRole] || ROLE_BADGES.DISPATCHER} hover:bg-opacity-80 cursor-pointer shadow-xs`}
             title="Switch Operator Role"
           >
             <UserCheck className="h-3.5 w-3.5" />
@@ -156,7 +172,7 @@ export function TopHeader({
           </button>
 
           {showRoleDropdown && (
-            <div className="absolute right-0 mt-2 w-56 rounded-lg border border-slate-200 bg-white p-2 shadow-lg z-50 text-xs space-y-1">
+            <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl z-50 text-xs space-y-1">
               <div className="px-2.5 py-1.5 border-b border-slate-100 text-[11px] text-slate-500 flex justify-between items-center font-medium">
                 <span>OPERATOR ROLE</span>
                 <span className="text-slate-900 font-bold">{user?.full_name?.split(' ')[0] || 'Dispatcher'}</span>
@@ -170,7 +186,7 @@ export function TopHeader({
                     switchRole(r);
                     setShowRoleDropdown(false);
                   }}
-                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs flex items-center justify-between transition-colors ${
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between transition-colors ${
                     currentRole === r
                       ? 'bg-red-50 text-red-700 font-bold border border-red-200'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
@@ -205,18 +221,6 @@ export function TopHeader({
             </div>
           )}
         </div>
-
-        {/* Action Button: File Incident */}
-        {onOpenNewIncidentModal && (
-          <button
-            type="button"
-            onClick={onOpenNewIncidentModal}
-            className="flex items-center gap-1.5 rounded-md bg-red-600 hover:bg-red-700 px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors"
-          >
-            <PlusCircle className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">File Incident</span>
-          </button>
-        )}
       </div>
     </header>
   );

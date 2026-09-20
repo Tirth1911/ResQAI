@@ -6,10 +6,13 @@ from pydantic import BaseModel, Field
 
 class IncidentSource(str, Enum):
     CITIZEN = "citizen"
+    CITIZEN_CALL = "citizen_call"
     CALL_CENTER = "call_center"
     CALL_911 = "call_911"
+    EMERGENCY_HOTLINE = "emergency_hotline"
     IOT = "iot"
     IOT_SENSOR = "iot_sensor"
+    HAZMAT_ALERT = "hazmat_alert"
     FIELD_TEAM = "field_team"
     FIELD_UNIT = "field_unit"
     HOSPITAL = "hospital"
@@ -70,9 +73,16 @@ class GeoPoint(BaseModel):
 
 class TimelineEvent(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    action: str
+    action: str = Field(default="Event Recorded")
     actor: str = "System"
     details: Optional[str] = None
+
+    def __init__(self, **data):
+        if "event" in data and "action" not in data:
+            data["action"] = data.pop("event")
+        if "notes" in data and "details" not in data:
+            data["details"] = data.pop("notes")
+        super().__init__(**data)
 
 
 class IncidentModel(BaseModel):

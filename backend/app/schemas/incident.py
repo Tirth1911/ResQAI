@@ -67,7 +67,7 @@ class IncidentResponse(BaseModel):
     location: GeoPoint
     address: str
     reported_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
     ai_analysis: Dict[str, Any] = Field(default_factory=dict)
     duplicate_of: Optional[str] = None
     confidence: float = 0.0

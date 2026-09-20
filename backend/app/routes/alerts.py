@@ -57,6 +57,7 @@ async def create_alert(
     return doc
 
 
+@router.get("", response_model=List[AlertResponse], summary="List Emergency Alerts", include_in_schema=False)
 @router.get("/", response_model=List[AlertResponse], summary="List Emergency Alerts")
 async def list_alerts(
     limit: int = Query(20, ge=1, le=50),

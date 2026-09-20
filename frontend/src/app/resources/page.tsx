@@ -170,6 +170,15 @@ export default function ResourcesPage() {
     }
   };
 
+  const handleReleaseResource = async (res: Resource) => {
+    try {
+      await resourceService.releaseResource(res.resource_id, 'Command Dispatcher');
+      await loadData(false);
+    } catch (e) {
+      console.error('Error releasing resource:', e);
+    }
+  };
+
   const handleSaveResourceModal = async (resourceData: any) => {
     try {
       if (modalMode === 'create') {
@@ -515,6 +524,8 @@ export default function ResourcesPage() {
                 key={res.resource_id || res.id || res._id}
                 resource={res}
                 onSelect={(r) => handleViewResource(r)}
+                onEdit={(r) => handleEditResource(r)}
+                onRelease={(r) => handleReleaseResource(r)}
                 onStatusChange={(status: any) => handleStatusChange(res.resource_id, status)}
                 onAssign={(r) => handleViewResource(r)}
               />
@@ -536,60 +547,72 @@ export default function ResourcesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredResources.map((res) => (
-                  <tr key={res.resource_id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-bold text-slate-900">{res.name}</div>
-                      <div className="font-mono text-[10px] text-slate-400">#{res.resource_id}</div>
-                    </td>
-                    <td className="px-4 py-3 capitalize">{(res.category || res.type || '').replace('_', ' ')}</td>
-                    <td className="px-4 py-3">
-                      <StatusBadge type="resource" value={res.status} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1 max-w-xs">
-                        {res.capabilities?.map((cap, i) => (
-                          <span
-                            key={i}
-                            className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded text-[10px] border border-slate-200"
-                          >
-                            {cap}
+                {filteredResources.map((res) => {
+                  const isBusy = res.status === 'BUSY' || res.status === 'EN_ROUTE';
+                  return (
+                    <tr key={res.resource_id} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-bold text-slate-900">{res.name}</div>
+                        <div className="font-mono text-[10px] text-slate-400">#{res.resource_id}</div>
+                      </td>
+                      <td className="px-4 py-3 capitalize">{(res.category || res.type || '').replace('_', ' ')}</td>
+                      <td className="px-4 py-3">
+                        <StatusBadge type="resource" value={res.status} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {res.capabilities?.map((cap, i) => (
+                            <span
+                              key={i}
+                              className="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded text-[10px] border border-slate-200"
+                            >
+                              {cap}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        {res.location?.address || 'Sector 12 Command'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {res.current_incident_id || res.assigned_incident_id ? (
+                          <span className="font-mono font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
+                            #{res.current_incident_id || res.assigned_incident_id}
                           </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">
-                      {res.location?.address || 'Sector 12 Command'}
-                    </td>
-                    <td className="px-4 py-3">
-                      {res.current_incident_id || res.assigned_incident_id ? (
-                        <span className="font-mono font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-200">
-                          #{res.current_incident_id || res.assigned_incident_id}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 text-[11px]">Unassigned</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleViewResource(res)}
-                          className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px]"
-                        >
-                          View
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleEditResource(res)}
-                          className="px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[11px] border border-red-200"
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isBusy && (
+                            <button
+                              type="button"
+                              onClick={() => handleReleaseResource(res)}
+                              className="px-2 py-1 rounded bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-[11px] border border-amber-200"
+                            >
+                              Release
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleViewResource(res)}
+                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px]"
+                          >
+                            View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleEditResource(res)}
+                            className="px-2 py-1 rounded bg-red-50 hover:bg-red-100 text-red-700 font-bold text-[11px] border border-red-200"
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

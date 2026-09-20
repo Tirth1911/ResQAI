@@ -8,7 +8,8 @@ from backend.app.services.db_service import DBService, clean_mongo_doc
 router = APIRouter()
 
 
-@router.get("/", response_model=List[HospitalResponse], summary="Get Emergency Hospitals (with Proximity)")
+@router.get("", response_model=List[HospitalResponse], summary="Get Emergency Hospitals (with Proximity)")
+@router.get("/", response_model=List[HospitalResponse], include_in_schema=False)
 async def get_hospitals(
     status: Optional[str] = Query(None, description="Filter by status (OPEN, LIMITED, CLOSED)"),
     near_longitude: Optional[float] = Query(None, ge=-180.0, le=180.0),

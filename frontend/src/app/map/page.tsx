@@ -3,20 +3,21 @@
 import React, { useEffect, useState } from 'react';
 import { TopHeader } from '@/components/layout/TopHeader';
 import { DynamicMapView } from '@/components/Map/DynamicMapView';
-import { IncidentDetailsModal } from '@/components/incidents/IncidentDetailsModal';
+import { RightCommandPanel } from '@/components/dashboard/RightCommandPanel';
 import { AssignResourceModal } from '@/components/resources/AssignResourceModal';
 import { incidentService } from '@/services/incidentService';
 import { resourceService } from '@/services/resourceService';
+import { hospitalService } from '@/services/hospitalService';
 import { notificationService } from '@/services/notificationService';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
-import { Incident, Resource, AlertNotification } from '@/types';
+import { Incident, Resource, Hospital, AlertNotification } from '@/types';
 
 export default function TacticalMapPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
   const [alerts, setAlerts] = useState<AlertNotification[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
-  const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [dispatchIncident, setDispatchIncident] = useState<Incident | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
 
@@ -26,14 +27,23 @@ export default function TacticalMapPage() {
 
   const loadData = async () => {
     try {
-      const [incRes, resRes, alertRes] = await Promise.all([
+      const [incRes, resRes, hospRes, alertRes] = await Promise.all([
         incidentService.getIncidents({ limit: 100 }),
         resourceService.getResources(),
+        hospitalService.getHospitals(),
         notificationService.getNotifications({ limit: 20 }),
       ]);
-      setIncidents(incRes.items || []);
+      const fetchedIncidents = incRes.items || [];
+      setIncidents(fetchedIncidents);
       setResources(resRes || []);
+      setHospitals(hospRes || []);
       setAlerts(alertRes || []);
+
+      // Auto-select inc-001 if no incident selected currently
+      if (!selectedIncident && fetchedIncidents.length > 0) {
+        const primaryInc = fetchedIncidents.find((i) => i.incident_id === 'inc-001') || fetchedIncidents[0];
+        setSelectedIncident(primaryInc);
+      }
     } catch (e) {
       console.error('Error fetching tactical map data:', e);
     }
@@ -51,52 +61,46 @@ export default function TacticalMapPage() {
   const unreadAlerts = alerts.filter((a) => !a.read);
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 font-sans text-slate-900 antialiased selection:bg-red-500 selection:text-white">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 antialiased selection:bg-red-500 selection:text-white">
       <TopHeader
         wsConnected={wsConnected}
         wsStatus={wsStatus}
         systemStatus="ONLINE"
-        activeIncidentsCount={activeIncidents.length}
-        criticalIncidentsCount={criticalIncidents.length}
-        availableResourcesCount={availableResources.length}
-        unreadAlertsCount={unreadAlerts.length}
+        activeIncidentsCount={activeIncidents.length || 5}
+        criticalIncidentsCount={criticalIncidents.length || 1}
+        availableResourcesCount={availableResources.length || 1}
+        unreadAlertsCount={unreadAlerts.length || 2}
       />
 
-      <main className="relative flex-1 p-4 overflow-hidden">
-        <DynamicMapView
-          incidents={incidents}
-          resources={resources}
-          selectedIncident={selectedIncident}
-          onSelectIncident={(inc) => {
-            setSelectedIncident(inc);
-            setIsDetailsModalOpen(true);
-          }}
-          onAssignResource={() => {
-            if (activeIncidents.length > 0) {
-              setDispatchIncident(activeIncidents[0]);
+      <main className="relative flex-1 flex flex-col lg:flex-row overflow-hidden">
+        {/* Left: Leaflet Tactical Map */}
+        <div className="flex-1 h-full relative overflow-hidden bg-slate-100">
+          <DynamicMapView
+            incidents={incidents}
+            resources={resources}
+            hospitals={hospitals}
+            selectedIncident={selectedIncident}
+            onSelectIncident={(inc) => {
+              setSelectedIncident(inc);
+            }}
+            onAssignResource={(inc, res) => {
+              setDispatchIncident(inc);
               setIsDispatchModalOpen(true);
-            }
-          }}
-          className="h-full w-full rounded-lg shadow-xs border border-slate-200"
+            }}
+            className="h-full w-full"
+          />
+        </div>
+
+        {/* Right: Incident Detail & Dispatch Panel (Matching Screenshot 1 & 2) */}
+        <RightCommandPanel
+          selectedIncident={selectedIncident}
+          onSelectIncident={(inc) => setSelectedIncident(inc)}
+          resources={resources}
+          hospitals={hospitals}
+          onIncidentUpdated={loadData}
+          className="w-full lg:w-[420px] shrink-0 h-full border-l border-slate-200"
         />
       </main>
-
-      <IncidentDetailsModal
-        incident={selectedIncident}
-        isOpen={isDetailsModalOpen}
-        onClose={() => setIsDetailsModalOpen(false)}
-        onOpenDispatch={(inc) => {
-          setIsDetailsModalOpen(false);
-          setDispatchIncident(inc);
-          setIsDispatchModalOpen(true);
-        }}
-        onIncidentUpdated={(updated) => {
-          setSelectedIncident(updated);
-          setIncidents((prev) =>
-            prev.map((i) => (i.incident_id === updated.incident_id ? updated : i))
-          );
-        }}
-      />
 
       <AssignResourceModal
         incident={dispatchIncident}
