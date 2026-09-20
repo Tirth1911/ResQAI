@@ -1451,7 +1451,7 @@ Add the final hackathon demonstration video here:
 ```markdown
 ## 🎥 Demo
 
-[▶️ Watch the ResQAI Demo](YOUR_VIDEO_LINK)
+[▶️ Watch the ResQAI Demo](https://youtu.be/SSwf0XOahuo)
 ```
 
 The demonstration should show the complete journey from **incident creation → AI analysis → resource recommendation → assignment → real-time monitoring → resolution**.
@@ -1465,8 +1465,7 @@ If a deployed version is available:
 ```markdown
 ## 🌐 Live Demo
 
-[🚀 Launch ResQAI](https://res-qai-chi.vercel.app/))
-YouTube:https://youtu.be/SSwf0XOahuo
+[🚀 Launch ResQAI](https://res-qai-chi.vercel.app/)
 ```
 
 If deployment is not available, remove this section rather than adding a placeholder link.
