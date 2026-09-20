@@ -1465,7 +1465,7 @@ If a deployed version is available:
 ```markdown
 ## 🌐 Live Demo
 
-[🚀 Launch ResQAI](YOUR_LIVE_DEMO_URL)
+[🚀 Launch ResQAI](https://res-qai-chi.vercel.app/))
 ```
 
 If deployment is not available, remove this section rather than adding a placeholder link.
