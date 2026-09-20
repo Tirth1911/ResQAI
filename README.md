@@ -1466,6 +1466,7 @@ If a deployed version is available:
 ## 🌐 Live Demo
 
 [🚀 Launch ResQAI](https://res-qai-chi.vercel.app/))
+YouTube:https://youtu.be/SSwf0XOahuo
 ```
 
 If deployment is not available, remove this section rather than adding a placeholder link.
