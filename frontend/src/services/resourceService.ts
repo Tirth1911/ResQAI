@@ -26,7 +26,10 @@ export const resourceService = {
     if (params?.limit) query.append('limit', params.limit.toString());
 
     const qs = query.toString() ? `?${query.toString()}` : '';
-    return fetchApi<Resource[]>(`/resources${qs}`);
+    const raw = await fetchApi<any>(`/resources${qs}`);
+    if (Array.isArray(raw)) return raw;
+    if (raw && Array.isArray(raw.items)) return raw.items;
+    return raw || [];
   },
 
   async getResourceById(resourceId: string): Promise<Resource> {

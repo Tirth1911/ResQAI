@@ -136,3 +136,28 @@ body {
   background: transparent !important;
   border: none !important;
 }
+
+/* Tactical Animated Route Flow */
+@keyframes route-flow-forward {
+  from {
+    stroke-dashoffset: 48;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.route-flow-animated {
+  animation: route-flow-forward 1.5s linear infinite !important;
+}
+
+.route-flow-animated path {
+  animation: route-flow-forward 1.5s linear infinite !important;
+}
+
+/* Highlighted route glow */
+.tactical-route-highlight path,
+path.tactical-route-highlight {
+  filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.35));
+  stroke-width: 5.5px !important;
+}

@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from backend.app.models.incident import (
     IncidentSource,
     IncidentType,
@@ -19,18 +19,65 @@ class IncidentLocationInput(BaseModel):
 
 
 class IncidentCreate(BaseModel):
-    title: str = Field(..., min_length=3, max_length=200, description="Brief summary of the emergency")
-    description: str = Field(..., min_length=5, description="Detailed description of what is happening")
+    title: Optional[str] = Field(default=None, description="Brief summary of the emergency")
+    description: str = Field(..., min_length=3, description="Detailed description of what is happening")
     source: IncidentSource = Field(default=IncidentSource.CITIZEN, description="Reporting channel")
     type: Optional[IncidentType] = Field(default=None, description="Incident category (if omitted, AI classification is performed)")
     severity: Optional[IncidentSeverity] = Field(default=None, description="Severity ranking (if omitted, estimated by AI)")
     priority: Optional[IncidentPriority] = Field(default=None, description="Dispatch priority P1-P4 (if omitted, assigned by AI)")
     status: Optional[IncidentStatus] = Field(default=IncidentStatus.REPORTED, description="Initial incident status")
-    location: IncidentLocationInput = Field(..., description="Geographical coordinates of the incident")
+    location: Optional[Any] = Field(default=None, description="Geographical coordinates or address string")
     address: Optional[str] = Field(default=None, description="Explicit address string")
     reported_at: Optional[datetime] = Field(default=None, description="Report timestamp (defaults to current UTC time)")
     assigned_resources: List[str] = Field(default_factory=list, description="Initial assigned resource IDs")
     duplicate_of: Optional[str] = Field(default=None, description="Master incident ID if known duplicate")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        
+        # 1. Normalize title if missing
+        if not data.get("title") and data.get("description"):
+            desc = data["description"].strip()
+            first_sent = desc.split(".")[0].split("\n")[0]
+            data["title"] = (first_sent[:90] + "...") if len(first_sent) > 90 else first_sent
+            if len(data["title"]) < 3:
+                data["title"] = "Emergency Incident Report"
+
+        # 2. Normalize location
+        loc = data.get("location")
+        if isinstance(loc, str):
+            addr_str = loc
+            lat, lon = 23.0225, 72.5714  # Ahmedabad center default
+            addr_lower = addr_str.lower()
+            if "odhav" in addr_lower:
+                lat, lon = 23.0310, 72.6560
+            elif "highway" in addr_lower or "iscon" in addr_lower:
+                lat, lon = 23.0290, 72.5070
+            elif "naroda" in addr_lower:
+                lat, lon = 23.0710, 72.6550
+            elif "subhash" in addr_lower or "river" in addr_lower:
+                lat, lon = 23.0610, 72.5850
+            elif "navrangpura" in addr_lower:
+                lat, lon = 23.0360, 72.5610
+            data["location"] = IncidentLocationInput(latitude=lat, longitude=lon, address=addr_str)
+            if not data.get("address"):
+                data["address"] = addr_str
+        elif isinstance(loc, dict):
+            lat = loc.get("latitude") or loc.get("lat") or 23.0225
+            lon = loc.get("longitude") or loc.get("lng") or loc.get("lon") or 72.5714
+            addr = loc.get("address") or data.get("address")
+            data["location"] = IncidentLocationInput(latitude=float(lat), longitude=float(lon), address=addr)
+        elif loc is None:
+            # Fallback from flat lat/lng or address
+            lat = data.get("lat") or data.get("latitude") or 23.0225
+            lon = data.get("lng") or data.get("lon") or data.get("longitude") or 72.5714
+            addr = data.get("address") or f"Lat: {lat}, Lon: {lon}"
+            data["location"] = IncidentLocationInput(latitude=float(lat), longitude=float(lon), address=addr)
+
+        return data
 
 
 class IncidentUpdate(BaseModel):

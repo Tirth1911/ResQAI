@@ -20,11 +20,16 @@ export interface ToastMessage {
   severity: 'CRITICAL' | 'WARNING' | 'INFO' | 'SUCCESS';
   timestamp: string;
   event: string;
+  location?: string;
+  priority?: string;
+  incidentId?: string;
+  actionUrl?: string;
 }
 
 interface WebSocketContextType {
   status: WebSocketStatus;
   isConnected: boolean;
+  reconnectCount: number;
   lastEvent: WebSocketEventPayload | null;
   send: (message: string | object) => void;
   toasts: ToastMessage[];
@@ -52,6 +57,7 @@ function normalizeWsUrl(): string {
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<WebSocketStatus>('DISCONNECTED');
+  const [reconnectCount, setReconnectCount] = useState<number>(0);
   const [lastEvent, setLastEvent] = useState<WebSocketEventPayload | null>(null);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -59,6 +65,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const listenersRef = useRef<Set<(payload: WebSocketEventPayload) => void>>(new Set());
   const reconnectAttemptsRef = useRef(0);
+  const processedEventIdsRef = useRef<Set<string>>(new Set());
 
   const addToast = useCallback((toast: Omit<ToastMessage, 'id' | 'timestamp'>) => {
     const newToast: ToastMessage = {
@@ -69,10 +76,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     setToasts((prev) => [newToast, ...prev.slice(0, 4)]); // Keep max 5 toasts
 
-    // Auto-dismiss after 6 seconds
+    // Auto-dismiss: 9 seconds for CRITICAL, 6 seconds for others
+    const timeoutMs = toast.severity === 'CRITICAL' ? 9000 : 6000;
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== newToast.id));
-    }, 6000);
+    }, timeoutMs);
   }, []);
 
   const dismissToast = useCallback((id: string) => {
@@ -83,45 +91,80 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     const evt = payload.event;
     const data = payload.data || {};
 
-    if (evt === 'INCIDENT_CREATED') {
+    if (evt === 'NEW_INCIDENT' || evt === 'INCIDENT_CREATED') {
+      const isCritical =
+        (data.severity || '').toUpperCase() === 'CRITICAL' ||
+        (data.priority || '').toUpperCase() === 'P1';
+
+      if (isCritical) {
+        addToast({
+          title: '🔴 NEW CRITICAL INCIDENT',
+          message: data.title || data.description || 'Major Emergency Incident Ingested',
+          severity: 'CRITICAL',
+          event: evt,
+          location: data.address || data.location?.address || 'Incident Sector',
+          priority: data.priority || 'P1',
+          incidentId: data.incident_id || payload.incident_id,
+          actionUrl: `/map?incident=${data.incident_id || payload.incident_id || ''}`,
+        });
+      } else {
+        addToast({
+          title: '🚨 New Incident Logged',
+          message: data.title || payload.incident_id || 'Emergency call ingested',
+          severity: 'WARNING',
+          event: evt,
+          location: data.address || data.location?.address,
+          priority: data.priority,
+        });
+      }
+    } else if (evt === 'DISPATCH_REQUIRED') {
       addToast({
-        title: '🚨 New Incident Logged',
-        message: data.title || payload.incident_id || 'Emergency call ingested',
-        severity: data.severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING',
+        title: '⚡ DISPATCH REQUIRED',
+        message: data.reason || `Response resources required for incident ${data.incident_id || ''}`,
+        severity: 'CRITICAL',
         event: evt,
+        priority: data.priority,
+        location: typeof data.location === 'string' ? data.location : data.location?.address,
       });
     } else if (evt === 'INCIDENT_ESCALATED') {
       addToast({
         title: '⚡ Incident Escalated',
-        message: `${payload.incident_id || 'Incident'} escalated to CRITICAL priority`,
+        message: `${payload.incident_id || data.incident_id || 'Incident'} escalated to CRITICAL priority`,
         severity: 'CRITICAL',
         event: evt,
       });
-    } else if (evt === 'INCIDENT_CLASSIFIED') {
+    } else if (evt === 'INCIDENT_RESOLVED') {
       addToast({
-        title: '🤖 AI Incident Classified',
-        message: `${payload.incident_id || 'Incident'}: ${data.incident_type || 'Assessed'} (${data.severity || 'Triage'})`,
-        severity: 'INFO',
-        event: evt,
-      });
-    } else if (evt === 'INCIDENT_DUPLICATED' || evt === 'INCIDENT_DUPLICATE_MERGED') {
-      addToast({
-        title: '🔗 Duplicate Report Merged',
-        message: `Linked duplicate report to ${payload.incident_id || 'incident'} via NLP/Geospatial match`,
-        severity: 'INFO',
-        event: evt,
-      });
-    } else if (evt === 'RESOURCE_ASSIGNED') {
-      addToast({
-        title: '🚒 Unit Dispatched',
-        message: `Unit ${payload.resource_id || ''} assigned to ${payload.incident_id || 'Incident'}`,
+        title: '🎯 Incident Resolved',
+        message: `Incident ${payload.incident_id || data.incident_id || 'Case'} has been successfully resolved.`,
         severity: 'SUCCESS',
         event: evt,
       });
-    } else if (evt === 'RESOURCE_RELEASED') {
+    } else if (evt === 'INCIDENT_CLASSIFIED' || evt === 'AI_ANALYSIS_UPDATED') {
       addToast({
-        title: '✅ Unit Released',
-        message: `Unit ${payload.resource_id || ''} is now AVAILABLE in pool`,
+        title: '🤖 AI Incident Classified',
+        message: `${payload.incident_id || data.incident_id || 'Incident'}: ${data.incident_type || data.type || 'Assessed'} (${data.severity || 'Triage'})`,
+        severity: 'INFO',
+        event: evt,
+      });
+    } else if (evt === 'INCIDENT_DUPLICATED' || evt === 'INCIDENT_DUPLICATE_MERGED' || evt === 'DUPLICATE_DETECTED') {
+      addToast({
+        title: '🔗 Duplicate Report Merged',
+        message: `Linked duplicate report to ${payload.incident_id || data.matched_incident_id || 'incident'} via 3-Signal matching`,
+        severity: 'INFO',
+        event: evt,
+      });
+    } else if (evt === 'RESOURCE_DISPATCHED' || evt === 'RESOURCE_ASSIGNED') {
+      addToast({
+        title: '🚒 Unit Dispatched',
+        message: `Unit ${payload.resource_id || data.resource_id || ''} dispatched to ${payload.incident_id || data.incident_id || 'Incident'}`,
+        severity: 'SUCCESS',
+        event: evt,
+      });
+    } else if (evt === 'RESOURCE_AVAILABLE' || evt === 'RESOURCE_RELEASED') {
+      addToast({
+        title: '✅ Unit Available',
+        message: `Unit ${payload.resource_id || data.resource_id || ''} returned to AVAILABLE standby pool`,
         severity: 'SUCCESS',
         event: evt,
       });
@@ -132,12 +175,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         severity: 'CRITICAL',
         event: evt,
       });
-    } else if (evt === 'NOTIFICATION_CREATED' || evt === 'ALERT_TRIGGERED') {
+    } else if (evt === 'NOTIFICATION_CREATED' || evt === 'ALERT_CREATED' || evt === 'ALERT_TRIGGERED') {
       addToast({
         title: '📢 Operational Alert',
         message: data.message || 'System notification received',
         severity: data.severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING',
         event: evt,
+        location: data.location,
+        priority: data.priority,
       });
     }
   }, [addToast]);
@@ -157,12 +202,31 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       ws.onopen = () => {
         console.log('[ResQAI WebSocket] Connection established successfully.');
         setStatus('CONNECTED');
+        const wasReconnecting = reconnectAttemptsRef.current > 0;
         reconnectAttemptsRef.current = 0;
+
+        // If reconnecting, increment count to trigger latest server state synchronization
+        if (wasReconnecting) {
+          setReconnectCount((prev) => prev + 1);
+        }
       };
 
       ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as WebSocketEventPayload;
+
+          // Event deduplication check
+          if (payload.event_id) {
+            if (processedEventIdsRef.current.has(payload.event_id)) {
+              return;
+            }
+            processedEventIdsRef.current.add(payload.event_id);
+            if (processedEventIdsRef.current.size > 1000) {
+              const toDelete = Array.from(processedEventIdsRef.current).slice(0, 200);
+              toDelete.forEach((id) => processedEventIdsRef.current.delete(id));
+            }
+          }
+
           setLastEvent(payload);
 
           // Trigger toast notifications
@@ -244,6 +308,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       value={{
         status,
         isConnected: status === 'CONNECTED',
+        reconnectCount,
         lastEvent,
         send,
         toasts,

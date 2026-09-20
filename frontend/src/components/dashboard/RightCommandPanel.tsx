@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Incident, Resource, Hospital } from '@/types';
 import { incidentService } from '@/services/incidentService';
 import { resourceService } from '@/services/resourceService';
@@ -21,6 +21,9 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle,
+  RotateCcw,
+  ShieldCheck,
+  CheckCheck,
 } from 'lucide-react';
 
 interface RightCommandPanelProps {
@@ -29,12 +32,15 @@ interface RightCommandPanelProps {
   resources: Resource[];
   hospitals: Hospital[];
   onIncidentUpdated: () => void;
+  hoveredUnitId?: string | null;
+  selectedUnitId?: string | null;
+  onHoverUnit?: (unitId: string | null) => void;
+  onSelectUnit?: (unitId: string | null) => void;
+  liveTelemetry?: Record<string, { distanceKm: number; etaMin: number; arrived: boolean }>;
   className?: string;
 }
 
 function getMatchColor(score: number): string {
-  if (score >= 0.7) return 'text-emerald-700 bg-emerald-50 border-emerald-200';
-  if (score >= 0.5) return 'text-amber-700 bg-amber-50 border-amber-200';
   return 'text-red-700 bg-red-50 border-red-200';
 }
 
@@ -59,12 +65,18 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
   resources,
   hospitals,
   onIncidentUpdated,
+  hoveredUnitId,
+  selectedUnitId,
+  onHoverUnit,
+  onSelectUnit,
+  liveTelemetry = {},
   className = '',
 }) => {
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
   const [dispatchingId, setDispatchingId] = useState<string | null>(null);
   const [dispatched, setDispatched] = useState<Set<string>>(new Set());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // When incident is selected, fetch recommendations
   useEffect(() => {
@@ -88,6 +100,16 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
     }
   }, [selectedIncident?.incident_id]);
 
+  // Scroll to unit card when selectedUnitId changes from map click
+  useEffect(() => {
+    if (selectedUnitId) {
+      const cardEl = document.getElementById(`unit-card-${selectedUnitId}`);
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }, [selectedUnitId]);
+
   // Dispatch resource
   const handleDispatch = async (rec: any) => {
     if (!selectedIncident) return;
@@ -106,8 +128,29 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
     }
   };
 
+  // Recall dispatched resource
+  const handleRecall = async (resourceId: string) => {
+    if (!selectedIncident) return;
+    try {
+      setDispatched((prev) => {
+        const next = new Set(prev);
+        next.delete(resourceId);
+        return next;
+      });
+      onIncidentUpdated();
+    } catch (err) {
+      console.error('Recall error:', err);
+    }
+  };
+
   const priorityScore = selectedIncident ? getPriorityScore(selectedIncident.priority) : 0;
   const availableRecs = recommendations.filter((r) => !dispatched.has(r.resource_id));
+  const dispatchedRecs = resources.filter(
+    (r) =>
+      dispatched.has(r.resource_id) ||
+      r.current_incident_id === selectedIncident?.incident_id ||
+      (r as any).assigned_incident_id === selectedIncident?.incident_id
+  );
 
   return (
     <div
@@ -121,10 +164,18 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
               <span className="font-mono text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md border border-slate-200 tracking-wider">
                 {selectedIncident.incident_id?.toUpperCase()}
               </span>
-              <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${getSeverityColor(selectedIncident.severity)}`}>
-                {selectedIncident.severity === 'CRITICAL' ? 'Critical Priority' :
-                 selectedIncident.severity === 'HIGH' ? 'High Priority' :
-                 selectedIncident.severity === 'MEDIUM' ? 'Medium Priority' : 'Low Priority'}
+              <span
+                className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${getSeverityColor(
+                  selectedIncident.severity
+                )}`}
+              >
+                {selectedIncident.severity === 'CRITICAL'
+                  ? 'Critical Priority'
+                  : selectedIncident.severity === 'HIGH'
+                  ? 'High Priority'
+                  : selectedIncident.severity === 'MEDIUM'
+                  ? 'Medium Priority'
+                  : 'Low Priority'}
               </span>
             </div>
             <button
@@ -145,7 +196,7 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
       </div>
 
       {/* ─── Main Scrollable Content ───────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
         {selectedIncident ? (
           <div className="p-5 space-y-4">
             {/* Incident Title */}
@@ -192,6 +243,78 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
               </div>
             </div>
 
+            {/* ─── DISPATCHED RESPONSE UNITS (ACTIVE ROUTES) ─── */}
+            {dispatchedRecs.length > 0 && (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] uppercase font-black tracking-widest text-slate-700 flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+                    DISPATCHED UNITS ({dispatchedRecs.length})
+                  </p>
+                  <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                    Live Transit
+                  </span>
+                </div>
+
+                <div className="space-y-2.5">
+                  {dispatchedRecs.map((unit) => {
+                    const tel = liveTelemetry[unit.resource_id];
+                    const isSelected = selectedUnitId === unit.resource_id;
+                    const isHovered = hoveredUnitId === unit.resource_id;
+
+                    return (
+                      <div
+                        key={unit.resource_id}
+                        id={`unit-card-${unit.resource_id}`}
+                        onMouseEnter={() => onHoverUnit?.(unit.resource_id)}
+                        onMouseLeave={() => onHoverUnit?.(null)}
+                        onClick={() => onSelectUnit?.(unit.resource_id)}
+                        className={`rounded-xl border p-3.5 space-y-2.5 transition-all cursor-pointer ${
+                          isSelected || isHovered
+                            ? 'border-red-400 bg-red-50/30 shadow-md ring-2 ring-red-400/50'
+                            : 'border-emerald-200 bg-emerald-50/20 hover:border-emerald-300'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-xs">{unit.name}</h4>
+                            <p className="text-[10px] text-slate-400">
+                              {(unit.category || unit.type || '').replace('_', ' ')}
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                            {tel?.arrived ? 'ARRIVED ON SCENE' : 'EN ROUTE'}
+                          </span>
+                        </div>
+
+                        {/* Live Telemetry Row */}
+                        <div className="flex items-center justify-between text-[11px] font-mono bg-white p-2 rounded-lg border border-slate-100">
+                          <span className="text-slate-600">
+                            Dist: <strong>{tel ? `${tel.distanceKm} km` : 'Calculating...'}</strong>
+                          </span>
+                          <span className="text-slate-300">|</span>
+                          <span className="text-red-600 font-bold">
+                            ETA: {tel ? (tel.arrived ? '0 min' : `${tel.etaMin} min`) : '—'}
+                          </span>
+                          <span className="text-slate-300">|</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRecall(unit.resource_id);
+                            }}
+                            className="text-[10px] text-slate-400 hover:text-red-600 font-sans font-semibold transition-colors"
+                          >
+                            Recall
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* ─── RECOMMENDED RESPONSE UNITS ────────────────── */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -208,7 +331,7 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
               {loadingRecs ? (
                 <div className="flex flex-col items-center gap-3 py-10 text-slate-400">
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  <span className="text-[11px] font-mono">Calculating nearest units...</span>
+                  <span className="text-[11px] font-mono">Calculating nearest road units...</span>
                 </div>
               ) : availableRecs.length === 0 ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-5 text-center">
@@ -230,10 +353,21 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
                     const etaMin = rec.eta_min ?? rec.eta ?? '—';
                     const capacity = rec.capacity ?? rec.max_capacity ?? 4;
 
+                    const isCardHovered = hoveredUnitId === rec.resource_id;
+                    const isCardSelected = selectedUnitId === rec.resource_id;
+
                     return (
                       <div
                         key={rec.resource_id}
-                        className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-150"
+                        id={`unit-card-${rec.resource_id}`}
+                        onMouseEnter={() => onHoverUnit?.(rec.resource_id)}
+                        onMouseLeave={() => onHoverUnit?.(null)}
+                        onClick={() => onSelectUnit?.(rec.resource_id)}
+                        className={`rounded-xl border p-4 space-y-3 transition-all duration-150 cursor-pointer ${
+                          isCardSelected || isCardHovered
+                            ? 'border-red-500 bg-red-50/20 shadow-md ring-2 ring-red-400/50'
+                            : 'border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300'
+                        }`}
                       >
                         {/* Unit Name & Match Score */}
                         <div className="flex items-start justify-between gap-3">
@@ -276,19 +410,22 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
 
                         {/* Reason + Dispatch Button */}
                         <div className="flex items-center justify-between gap-3">
-                          <p className="text-[11px] text-slate-400 font-medium flex-1 min-w-0 leading-relaxed line-clamp-2">
+                          <p className={`text-[11px] font-medium flex-1 min-w-0 leading-relaxed line-clamp-2 ${(rec.reason || '').includes('INDUSTRIAL') || (rec.reason || '').includes('match') ? 'text-sky-700' : 'text-slate-400'}`}>
                             {rec.reason || rec.reason_short || 'General emergency response asset'}
                           </p>
                           <button
                             type="button"
-                            onClick={() => handleDispatch(rec)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDispatch(rec);
+                            }}
                             disabled={isDispatching}
-                            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#8B1E1E] hover:bg-[#721818] active:scale-95 text-white font-bold rounded-lg text-[11px] transition-all shadow-sm shrink-0 disabled:opacity-60"
+                            className="flex items-center gap-1.5 px-3.5 py-2 bg-[#8B1E1E] hover:bg-[#721818] active:scale-95 text-white font-bold rounded-lg text-[11px] transition-all shadow-sm shrink-0 disabled:opacity-60 cursor-pointer"
                           >
                             {isDispatching ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
                             ) : (
-                              <Send className="h-3 w-3 rotate-45" />
+                              <Truck className="h-3.5 w-3.5 fill-white text-white" />
                             )}
                             <span>Dispatch Unit</span>
                           </button>
@@ -299,14 +436,6 @@ export const RightCommandPanel: React.FC<RightCommandPanelProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Dispatched units count */}
-            {dispatched.size > 0 && (
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 flex items-center gap-2 text-xs text-emerald-800 font-semibold">
-                <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
-                <span>{dispatched.size} unit{dispatched.size > 1 ? 's' : ''} dispatched to this incident</span>
-              </div>
-            )}
           </div>
         ) : (
           /* ─── No Incident Selected: Fleet Overview ─────── */

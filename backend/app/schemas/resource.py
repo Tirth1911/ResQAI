@@ -35,7 +35,7 @@ class ResourceResponse(BaseModel):
     capabilities: List[str] = Field(default_factory=list)
     status: ResourceStatus
     location: GeoPoint
-    capacity: int
+    capacity: int = 1
     current_incident_id: Optional[str] = None
     updated_at: datetime
     distance_km: Optional[float] = None

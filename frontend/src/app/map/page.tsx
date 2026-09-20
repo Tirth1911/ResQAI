@@ -21,6 +21,12 @@ export default function TacticalMapPage() {
   const [dispatchIncident, setDispatchIncident] = useState<Incident | null>(null);
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
 
+  // Tactical Routing & Simulation Interactive States
+  const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [liveTelemetry, setLiveTelemetry] = useState<Record<string, { distanceKm: number; etaMin: number; arrived: boolean }>>({});
+
   const { status: wsStatus, isConnected: wsConnected } = useRealtimeEvents(() => {
     loadData();
   });
@@ -39,10 +45,17 @@ export default function TacticalMapPage() {
       setHospitals(hospRes || []);
       setAlerts(alertRes || []);
 
-      // Auto-select inc-001 if no incident selected currently
-      if (!selectedIncident && fetchedIncidents.length > 0) {
-        const primaryInc = fetchedIncidents.find((i) => i.incident_id === 'inc-001') || fetchedIncidents[0];
-        setSelectedIncident(primaryInc);
+      // Sync selected incident with latest server data (e.g. updated assigned_resources)
+      if (fetchedIncidents.length > 0) {
+        setSelectedIncident((prev) => {
+          if (!prev) {
+            return fetchedIncidents.find((i) => i.incident_id === 'inc-001') || fetchedIncidents[0];
+          }
+          const fresh = fetchedIncidents.find(
+            (i) => i.incident_id === prev.incident_id || i.id === prev.id || (i as any)._id === (prev as any)._id
+          );
+          return fresh || prev;
+        });
       }
     } catch (e) {
       console.error('Error fetching tactical map data:', e);
@@ -70,6 +83,8 @@ export default function TacticalMapPage() {
         criticalIncidentsCount={criticalIncidents.length || 1}
         availableResourcesCount={availableResources.length || 1}
         unreadAlertsCount={unreadAlerts.length || 2}
+        onSimulate={() => setIsSimulating((prev) => !prev)}
+        isSimulating={isSimulating}
       />
 
       <main className="relative flex-1 flex flex-col lg:flex-row overflow-hidden">
@@ -82,11 +97,19 @@ export default function TacticalMapPage() {
             selectedIncident={selectedIncident}
             onSelectIncident={(inc) => {
               setSelectedIncident(inc);
+              setSelectedUnitId(null);
             }}
             onAssignResource={(inc, res) => {
               setDispatchIncident(inc);
               setIsDispatchModalOpen(true);
             }}
+            hoveredUnitId={hoveredUnitId}
+            selectedUnitId={selectedUnitId}
+            onHoverUnit={(uId) => setHoveredUnitId(uId)}
+            onSelectUnit={(uId) => setSelectedUnitId(uId)}
+            isSimulating={isSimulating}
+            onToggleSimulate={() => setIsSimulating((prev) => !prev)}
+            onTelemetryUpdate={(tel) => setLiveTelemetry(tel)}
             className="h-full w-full"
           />
         </div>
@@ -94,10 +117,18 @@ export default function TacticalMapPage() {
         {/* Right: Incident Detail & Dispatch Panel (Matching Screenshot 1 & 2) */}
         <RightCommandPanel
           selectedIncident={selectedIncident}
-          onSelectIncident={(inc) => setSelectedIncident(inc)}
+          onSelectIncident={(inc) => {
+            setSelectedIncident(inc);
+            setSelectedUnitId(null);
+          }}
           resources={resources}
           hospitals={hospitals}
           onIncidentUpdated={loadData}
+          hoveredUnitId={hoveredUnitId}
+          selectedUnitId={selectedUnitId}
+          onHoverUnit={(uId) => setHoveredUnitId(uId)}
+          onSelectUnit={(uId) => setSelectedUnitId(uId)}
+          liveTelemetry={liveTelemetry}
           className="w-full lg:w-[420px] shrink-0 h-full border-l border-slate-200"
         />
       </main>

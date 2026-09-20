@@ -46,7 +46,11 @@ export const incidentService = {
     if (params?.limit) query.append('limit', params.limit.toString());
 
     const qs = query.toString() ? `?${query.toString()}` : '';
-    return fetchApi<IncidentPaginatedResponse>(`/incidents${qs}`);
+    const raw = await fetchApi<any>(`/incidents${qs}`);
+    if (Array.isArray(raw)) {
+      return { items: raw, total: raw.length, page: 1, limit: raw.length, total_pages: 1 };
+    }
+    return raw || { items: [], total: 0, page: 1, limit: 10, total_pages: 0 };
   },
 
   async getActiveIncidents(limit: number = 50): Promise<IncidentPaginatedResponse> {

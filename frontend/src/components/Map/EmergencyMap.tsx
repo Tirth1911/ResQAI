@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Tooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { Incident, Resource, Hospital } from '@/types';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -22,46 +22,29 @@ interface EmergencyMapProps {
   selectedIncident: Incident | null;
   onSelectIncident: (incident: Incident) => void;
   onDispatchResource?: (incident: Incident, resource: Resource) => void;
+  hoveredUnitId?: string | null;
+  selectedUnitId?: string | null;
+  onHoverUnit?: (unitId: string | null) => void;
+  onSelectUnit?: (unitId: string) => void;
+  isSimulating?: boolean;
+  onToggleSimulate?: () => void;
+  onTelemetryUpdate?: (telemetry: Record<string, { distanceKm: number; etaMin: number; arrived: boolean }>) => void;
   className?: string;
 }
 
-// Map controller: fit all incidents on first load, fly-to on selection
+// Map controller: smoothly center on selected incident
 function MapController({
   selectedIncident,
-  incidents,
-  initialFitDone,
-  setInitialFitDone,
 }: {
   selectedIncident: Incident | null;
-  incidents: Incident[];
-  initialFitDone: boolean;
-  setInitialFitDone: (v: boolean) => void;
 }) {
   const map = useMap();
 
   useEffect(() => {
-    if (!initialFitDone && incidents.length > 0) {
-      const pts: [number, number][] = [];
-      incidents.forEach((inc) => {
-        const c = inc.location?.coordinates;
-        if (c && c.length >= 2 && !isNaN(c[0]) && !isNaN(c[1])) {
-          pts.push([c[1], c[0]]);
-        }
-      });
-      if (pts.length > 0) {
-        const bounds = L.latLngBounds(pts);
-        map.fitBounds(bounds, { padding: [80, 80], maxZoom: 12 });
-        setInitialFitDone(true);
-      }
-    }
-  }, [incidents, initialFitDone, map, setInitialFitDone]);
-
-  // Fly to selected incident but stay at wide enough zoom to show lines
-  useEffect(() => {
     if (selectedIncident?.location?.coordinates) {
       const [lon, lat] = selectedIncident.location.coordinates;
       if (!isNaN(lat) && !isNaN(lon)) {
-        map.flyTo([lat, lon], 12, { duration: 1.0 });
+        map.setView([lat, lon], 12, { animate: true });
       }
     }
   }, [selectedIncident, map]);
@@ -69,7 +52,7 @@ function MapController({
   return null;
 }
 
-// ─── Incident Marker Icon ─────────────────────────────────────────────────────
+// ─── Incident Marker Icon (matching screenshot) ─────────────────────────────
 const createIncidentIcon = (incident: Incident, isSelected: boolean) => {
   const severity = (incident.severity || 'MEDIUM').toUpperCase();
 
@@ -97,13 +80,13 @@ const createIncidentIcon = (incident: Incident, isSelected: boolean) => {
   else if (type.includes('collapse') || type.includes('building')) emoji = '🏚️';
 
   const selectedRing = isSelected
-    ? 'box-shadow:0 0 0 4px #dc2626, 0 0 0 7px rgba(220,38,38,0.25); transform: scale(1.15);'
+    ? 'box-shadow: 0 0 0 4px #dc2626, 0 0 0 8px rgba(220,38,38,0.25); transform: scale(1.15);'
     : '';
   const size = isSelected ? 44 : 36;
 
   const html = `
     <div class="${pulse}" style="position:relative;display:flex;align-items:center;justify-content:center;">
-      <div style="background:white;border-radius:14px;border:2.5px solid ${bg};padding:3px;display:flex;align-items:center;justify-content:center;${selectedRing};transition:all 0.15s;">
+      <div style="background:white;border-radius:14px;border:2.5px solid ${bg};padding:3px;display:flex;align-items:center;justify-content:center;${selectedRing}transition:all 0.15s;">
         <div style="background:${bg};width:${size - 14}px;height:${size - 14}px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:inset 0 1px 3px rgba(0,0,0,0.25);">
           <span>${emoji}</span>
         </div>
@@ -120,45 +103,66 @@ const createIncidentIcon = (incident: Incident, isSelected: boolean) => {
   });
 };
 
-// ─── Resource Marker Icon ─────────────────────────────────────────────────────
-const createResourceIcon = (resource: Resource) => {
+// ─── Resource Marker Icon (matching screenshot) ─────────────────────────────
+const createResourceIcon = (
+  resource: Resource,
+  isDispatched: boolean = false,
+  isHovered: boolean = false,
+  isSelected: boolean = false
+) => {
   const isAvail = (resource.status || '').toUpperCase() === 'AVAILABLE';
   const kind = (resource.category || resource.type || (resource as any).kind || '').toUpperCase();
 
   let bg = '#dc2626';
   let symbol = '🚒';
   if (kind.includes('AMBULANCE') || kind.includes('MEDICAL')) {
-    bg = '#059669'; symbol = '🚑';
+    bg = '#059669';
+    symbol = '🚑';
   } else if (kind.includes('POLICE')) {
-    bg = '#2563eb'; symbol = '🚓';
-  } else if (kind.includes('DRONE')) {
-    bg = '#0891b2'; symbol = '🛸';
+    bg = '#2563eb';
+    symbol = '🚓';
+  } else if (kind.includes('DRONE') || kind.includes('RECON')) {
+    bg = '#9333ea';
+    symbol = '🛸';
   } else if (kind.includes('HAZMAT')) {
-    bg = '#9f1239'; symbol = '☣️';
+    bg = '#9f1239';
+    symbol = '☣️';
   } else if (kind.includes('RESCUE') || kind.includes('BOAT') || kind.includes('DISASTER')) {
-    bg = '#d97706'; symbol = '🦺';
+    bg = '#ea580c';
+    symbol = '🦺';
   }
 
-  const statusDot = isAvail ? '#22c55e' : '#f59e0b';
+  const statusDot = isDispatched ? '#16a34a' : isAvail ? '#22c55e' : '#f59e0b';
+  const ringStyle = isDispatched
+    ? 'box-shadow: 0 0 0 3px #16a34a, 0 0 10px rgba(22,163,74,0.45); transform: scale(1.12);'
+    : isHovered || isSelected
+    ? 'box-shadow: 0 0 0 3px #2563eb, 0 0 8px rgba(37,99,235,0.4); transform: scale(1.1);'
+    : 'box-shadow: 0 1px 4px rgba(0,0,0,0.3);';
+
+  const dispatchedBadge = isDispatched
+    ? `<span style="position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;background:#16a34a;border:2px solid white;display:block;animation:pulse-ring 1.8s infinite;"></span>`
+    : '';
+
   const html = `
     <div style="position:relative;display:flex;align-items:center;justify-content:center;">
-      <div style="background:${bg};border-radius:8px;border:2px solid white;padding:2px;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;box-shadow:0 1px 4px rgba(0,0,0,0.3);">
+      <div style="background:${bg};border-radius:8px;border:2px solid white;padding:2px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:12px;${ringStyle}transition:all 0.15s;">
         <span>${symbol}</span>
       </div>
-      <span style="position:absolute;bottom:-2px;right:-2px;width:8px;height:8px;border-radius:50%;background:${statusDot};border:1.5px solid white;display:block;"></span>
+      ${dispatchedBadge}
+      <span style="position:absolute;bottom:-2px;right:-2px;width:9px;height:9px;border-radius:50%;background:${statusDot};border:1.5px solid white;display:block;"></span>
     </div>
   `;
 
   return L.divIcon({
     html,
     className: 'custom-resource-marker',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
     popupAnchor: [0, -16],
   });
 };
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Main Emergency Map Component ───────────────────────────────────────────
 export const EmergencyMap: React.FC<EmergencyMapProps> = ({
   incidents,
   resources = [],
@@ -166,67 +170,109 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
   selectedIncident,
   onSelectIncident,
   onDispatchResource,
+  hoveredUnitId,
+  selectedUnitId,
+  onHoverUnit,
+  onSelectUnit,
   className = '',
 }) => {
-  // Ahmedabad center
-  const defaultCenter: [number, number] = [23.0225, 72.5714];
-  const [initialFitDone, setInitialFitDone] = useState(false);
+  // Center on Ahmedabad / Odhav GIDC
+  const defaultCenter: [number, number] = [23.0135, 72.6582];
   const [showResources, setShowResources] = useState(true);
 
-  // Green dashed lines: resources → selected incident only
-  const candidateLines = useMemo(() => {
+  // Set of assigned/dispatched resource IDs for the selected incident
+  const dispatchedResourceIds = useMemo(() => {
+    const set = new Set<string>();
+    if (!selectedIncident) return set;
+
+    // Check selectedIncident.assigned_resources
+    if (Array.isArray(selectedIncident.assigned_resources)) {
+      selectedIncident.assigned_resources.forEach((id) => {
+        if (id) set.add(String(id));
+      });
+    }
+
+    // Check resources matching current or assigned incident
+    const incId = selectedIncident.incident_id || selectedIncident.id || (selectedIncident as any)._id;
+    resources.forEach((r) => {
+      const rId = r.resource_id || r.id || (r as any)._id;
+      if (
+        (r.current_incident_id && (r.current_incident_id === incId || r.current_incident_id === selectedIncident.incident_id)) ||
+        (r.assigned_incident_id && (r.assigned_incident_id === incId || r.assigned_incident_id === selectedIncident.incident_id))
+      ) {
+        if (rId) set.add(String(rId));
+      }
+    });
+
+    return set;
+  }, [selectedIncident, resources]);
+
+  // Dotted lines: ONLY show lines connected to units that are dispatched,
+  // or active preview when hovered/selected from the dispatch command panel
+  const dispatchLines = useMemo(() => {
     if (!selectedIncident?.location?.coordinates) return [];
     const [iLon, iLat] = selectedIncident.location.coordinates;
+    if (isNaN(iLat) || isNaN(iLon)) return [];
     const incPt: [number, number] = [iLat, iLon];
-    return resources
-      .filter((r) => r.location?.coordinates)
-      .map((r) => {
-        const [rLon, rLat] = r.location!.coordinates;
-        return {
-          key: r.resource_id,
-          positions: [[rLat, rLon], incPt] as [[number, number], [number, number]],
-        };
-      });
-  }, [resources, selectedIncident]);
 
-  // Assigned resource lines (darker green, solid)
-  const assignedLines = useMemo(() => {
     return resources
       .filter((r) => {
-        const assignedId = r.current_incident_id || (r as any).assigned_incident_id;
-        return assignedId && r.location?.coordinates;
+        if (!r.location?.coordinates || r.location.coordinates.length < 2) return false;
+        const [rLon, rLat] = r.location.coordinates;
+        if (isNaN(rLat) || isNaN(rLon)) return false;
+
+        const rId = r.resource_id || r.id || (r as any)._id;
+        const isDispatched = dispatchedResourceIds.has(String(rId));
+        const isHovered = Boolean(hoveredUnitId && hoveredUnitId === rId);
+        const isSelected = Boolean(selectedUnitId && selectedUnitId === rId);
+
+        // Crucial requirement: only show line when unit is dispatched (or active hover/select preview)
+        return isDispatched || isHovered || isSelected;
       })
       .map((r) => {
-        const assignedId = r.current_incident_id || (r as any).assigned_incident_id;
-        const targetInc = incidents.find(
-          (i) => i.incident_id === assignedId || i.id === assignedId
-        );
-        if (!targetInc?.location?.coordinates) return null;
-        const [rLon, rLat] = r.location!.coordinates;
-        const [iLon, iLat] = targetInc.location.coordinates;
+        const [rLon, rLat] = r.location.coordinates;
+        const rId = r.resource_id || r.id || (r as any)._id;
+        const isDispatched = dispatchedResourceIds.has(String(rId));
+        const isHovered = Boolean(hoveredUnitId && hoveredUnitId === rId);
+        const isSelected = Boolean(selectedUnitId && selectedUnitId === rId);
+
+        // Distance & ETA calculation (Haversine)
+        const dLat = ((incPt[0] - rLat) * Math.PI) / 180;
+        const dLon = ((incPt[1] - rLon) * Math.PI) / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos((rLat * Math.PI) / 180) *
+            Math.cos((incPt[0] * Math.PI) / 180) *
+            Math.sin(dLon / 2) *
+            Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distKm = Math.round(6371 * c * 10) / 10;
+        const estEtaMin = Math.max(1, Math.round((distKm / 35) * 60));
+
         return {
-          key: r.resource_id + '-assigned',
-          positions: [[rLat, rLon], [iLat, iLon]] as [[number, number], [number, number]],
+          key: `route-${rId}`,
+          resource: r,
+          resourceId: rId,
+          positions: [[rLat, rLon], incPt] as [[number, number], [number, number]],
+          isDispatched,
+          isHovered,
+          isSelected,
+          distanceKm: distKm,
+          etaMinutes: estEtaMin,
         };
-      })
-      .filter(Boolean) as Array<{ key: string; positions: [[number, number], [number, number]] }>;
-  }, [resources, incidents]);
+      });
+  }, [resources, selectedIncident, dispatchedResourceIds, hoveredUnitId, selectedUnitId]);
 
   return (
     <div className={`relative w-full h-full min-h-[480px] overflow-hidden bg-slate-100 ${className}`}>
       <MapContainer
         center={defaultCenter}
-        zoom={11}
+        zoom={12}
         scrollWheelZoom={true}
         className="w-full h-full z-0"
         style={{ background: '#f8fafc', minHeight: '100%', height: '100%' }}
       >
-        <MapController
-          selectedIncident={selectedIncident}
-          incidents={incidents}
-          initialFitDone={initialFitDone}
-          setInitialFitDone={setInitialFitDone}
-        />
+        <MapController selectedIncident={selectedIncident} />
 
         {/* Light OpenStreetMap Tiles */}
         <TileLayer
@@ -235,32 +281,56 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
           maxZoom={19}
         />
 
-        {/* Candidate lines: resources → selected incident (dashed green) */}
-        {candidateLines.map((line) => (
-          <Polyline
-            key={line.key}
-            positions={line.positions}
-            pathOptions={{
-              color: '#16a34a',
-              weight: 2,
-              dashArray: '6, 7',
-              opacity: 0.85,
-            }}
-          />
-        ))}
+        {/* Dotted lines connecting dispatched units to the incident */}
+        {selectedIncident &&
+          dispatchLines.map((line) => {
+            const isDispatched = line.isDispatched;
+            const isProminent = line.isHovered || line.isSelected;
 
-        {/* Assigned lines (solid green) */}
-        {assignedLines.map((line) => (
-          <Polyline
-            key={line.key}
-            positions={line.positions}
-            pathOptions={{
-              color: '#15803d',
-              weight: 2.5,
-              opacity: 0.9,
-            }}
-          />
-        ))}
+            return (
+              <Polyline
+                key={line.key}
+                positions={line.positions}
+                eventHandlers={{
+                  mouseover: () => onHoverUnit?.(line.resourceId),
+                  mouseout: () => onHoverUnit?.(null),
+                  click: () => onSelectUnit?.(line.resourceId),
+                }}
+                pathOptions={{
+                  color: isDispatched ? '#16a34a' : '#2563eb',
+                  weight: isProminent ? 4 : isDispatched ? 3 : 2,
+                  dashArray: isDispatched ? '7, 7' : '5, 6',
+                  opacity: isProminent ? 1 : isDispatched ? 0.92 : 0.65,
+                  className: isDispatched ? 'route-flow-animated cursor-pointer' : 'cursor-pointer',
+                }}
+              >
+                <Tooltip sticky direction="top" className="tactical-route-tooltip">
+                  <div className="p-2.5 text-xs font-sans space-y-1 bg-white rounded-xl shadow-lg border border-slate-200 min-w-[190px]">
+                    <div className="font-bold text-slate-800 flex items-center justify-between gap-2">
+                      <span className="truncate">{line.resource.name}</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold shrink-0 ${
+                          isDispatched
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-blue-100 text-blue-800 border border-blue-300'
+                        }`}
+                      >
+                        {isDispatched ? 'DISPATCHED' : 'PREVIEW ROUTE'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 flex items-center gap-1.5 pt-0.5 font-medium">
+                      <span>⚡ {line.distanceKm} km away</span>
+                      <span>•</span>
+                      <span>ETA: ~{line.etaMinutes} min</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate pt-0.5 border-t border-slate-100">
+                      Destination: {selectedIncident.title || selectedIncident.incident_id}
+                    </div>
+                  </div>
+                </Tooltip>
+              </Polyline>
+            );
+          })}
 
         {/* 1 km threat radius for selected incident */}
         {selectedIncident?.location?.coordinates && (
@@ -273,7 +343,7 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
             pathOptions={{
               color: '#dc2626',
               fillColor: '#ef4444',
-              fillOpacity: 0.1,
+              fillOpacity: 0.08,
               weight: 1.5,
               dashArray: '5, 5',
             }}
@@ -296,7 +366,7 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
               eventHandlers={{ click: () => onSelectIncident(incident) }}
             >
               <Popup>
-                <div className="p-3 text-slate-800 text-xs space-y-1.5 min-w-[200px]">
+                <div className="p-3 text-slate-800 text-xs space-y-1.5 min-w-[210px]">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
                     <span className="font-bold text-red-600 font-mono text-[11px]">{incident.incident_id}</span>
                     <StatusBadge type="severity" value={incident.severity} />
@@ -306,13 +376,6 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
                   <div className="text-[10px] text-slate-400 pt-0.5">
                     📍 {incident.address || `${lat.toFixed(4)}, ${lon.toFixed(4)}`}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onSelectIncident(incident)}
-                    className="w-full mt-1.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg text-xs transition-colors"
-                  >
-                    View Details →
-                  </button>
                 </div>
               </Popup>
             </Marker>
@@ -326,24 +389,37 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
             if (!coords || coords.length < 2) return null;
             const [lon, lat] = coords;
             if (isNaN(lat) || isNaN(lon)) return null;
+
+            const rId = resource.resource_id || resource.id || (resource as any)._id;
+            const isDispatched = dispatchedResourceIds.has(String(rId));
+            const isHovered = Boolean(hoveredUnitId && hoveredUnitId === rId);
+            const isSelected = Boolean(selectedUnitId && selectedUnitId === rId);
+
             return (
               <Marker
-                key={resource.resource_id || resource.id}
+                key={rId}
                 position={[lat, lon]}
-                icon={createResourceIcon(resource)}
+                icon={createResourceIcon(resource, isDispatched, isHovered, isSelected)}
+                eventHandlers={{
+                  click: () => onSelectUnit?.(rId),
+                  mouseover: () => onHoverUnit?.(rId),
+                  mouseout: () => onHoverUnit?.(null),
+                }}
               >
                 <Popup>
-                  <div className="p-2.5 text-slate-800 text-xs space-y-1 min-w-[170px]">
+                  <div className="p-2.5 text-slate-800 text-xs space-y-1.5 min-w-[180px]">
                     <div className="flex items-center justify-between font-bold border-b border-slate-100 pb-1">
                       <span className="text-slate-900 text-[12px]">{resource.name}</span>
-                      <StatusBadge type="resource" value={resource.status} />
+                      <StatusBadge type="resource" value={isDispatched ? 'EN_ROUTE' : resource.status} />
                     </div>
-                    <p className="text-slate-400 text-[11px] capitalize">
+                    {isDispatched && (
+                      <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded px-2 py-0.5 text-[10px] font-bold">
+                        ✓ Dispatched to active incident
+                      </div>
+                    )}
+                    <p className="text-slate-500 text-[11px] capitalize">
                       {(resource.category || resource.type || '').replace('_', ' ')}
                     </p>
-                    {resource.address && (
-                      <p className="text-[10px] text-slate-400">📍 {resource.address}</p>
-                    )}
                   </div>
                 </Popup>
               </Marker>
@@ -365,21 +441,10 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
           <Truck className="h-3.5 w-3.5" />
           Fleet Units
         </button>
-        <button
-          type="button"
-          className={`px-3 py-1.5 rounded-lg transition-colors text-[11px] font-semibold flex items-center gap-1.5 ${
-            selectedIncident
-              ? 'bg-red-50 text-red-800 border border-red-200'
-              : 'text-slate-400 border border-transparent'
-          }`}
-        >
-          <span>⚡</span>
-          Dispatches ({assignedLines.length})
-        </button>
       </div>
 
-      {/* ─── Map Legend (bottom-left, matching screenshot) ─── */}
-      <div className="absolute bottom-4 left-4 z-10 bg-white/96 backdrop-blur-sm border border-slate-200 p-3.5 rounded-2xl shadow-lg w-44 text-xs space-y-2.5">
+      {/* ─── Map Legend (bottom-left, matching reference image) ─── */}
+      <div className="absolute bottom-4 left-4 z-10 bg-white/96 backdrop-blur-sm border border-slate-200 p-3.5 rounded-2xl shadow-lg w-44 text-xs space-y-2.5 select-none pointer-events-auto">
         <div className="text-[10px] font-black uppercase tracking-widest text-slate-700">
           MAP LEGEND
         </div>
@@ -390,8 +455,8 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
             { color: '#d97706', label: 'Medium Severity', shape: 'circle' },
             { color: '#2563eb', label: 'Police Patrol', shape: 'circle' },
             { color: '#dc2626', label: 'Fire & Rescue', shape: 'square' },
-            { color: '#059669', label: 'Medical / 108', shape: 'circle' },
-            { color: '#0891b2', label: 'Drone Recon', shape: 'circle' },
+            { color: '#059669', label: 'Medical 108', shape: 'square' },
+            { color: '#9333ea', label: 'Drone Recon', shape: 'circle' },
           ].map(({ color, label, shape }) => (
             <div key={label} className="flex items-center gap-2">
               <span
@@ -408,11 +473,17 @@ export const EmergencyMap: React.FC<EmergencyMapProps> = ({
             </div>
           ))}
           {/* Dashed line legend */}
-          <div className="flex items-center gap-2 pt-0.5">
+          <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
             <svg width="14" height="6" viewBox="0 0 14 6" className="shrink-0">
-              <line x1="0" y1="3" x2="14" y2="3" stroke="#16a34a" strokeWidth="2" strokeDasharray="3,2" />
+              <line x1="0" y1="3" x2="14" y2="3" stroke="#16a34a" strokeWidth="2.5" strokeDasharray="3,2" />
             </svg>
-            <span>Response Route</span>
+            <span className="font-semibold text-slate-700">Dispatched Route</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <svg width="14" height="6" viewBox="0 0 14 6" className="shrink-0">
+              <line x1="0" y1="3" x2="14" y2="3" stroke="#2563eb" strokeWidth="2" strokeDasharray="2,2" />
+            </svg>
+            <span className="text-slate-500">Preview Route</span>
           </div>
         </div>
       </div>

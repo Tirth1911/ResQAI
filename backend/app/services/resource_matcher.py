@@ -360,18 +360,30 @@ class ResourceMatcher:
         updated_inc = await db.incidents.find_one(inc_query)
         assigned_list = updated_inc.get("assigned_resources", [])
 
-        # 5. Broadcast WebSocket Event
-        await ws_manager.broadcast_event(
-            WebSocketEventType.RESOURCE_ASSIGNED,
-            {
-                "incident_id": incident.get("incident_id", incident_id),
-                "resource_id": resource.get("resource_id", resource_id),
-                "resource_name": resource.get("name"),
-                "category": resource.get("category"),
-                "assigned_resources": assigned_list,
-                "actor": actor
-            }
+        # 5. Broadcast WebSocket Events
+        from backend.app.services.realtime import (
+            broadcast_resource_dispatched,
+            broadcast_resource_available,
+            broadcast_incident_updated,
         )
+
+        r_data = {
+            "resource_id": resource.get("resource_id", resource_id),
+            "name": resource.get("name"),
+            "category": resource.get("category"),
+            "capabilities": resource.get("capabilities", []),
+            "status": "BUSY",
+            "current_incident_id": incident.get("incident_id", incident_id),
+        }
+        await broadcast_resource_dispatched(
+            resource_id=resource.get("resource_id", resource_id),
+            incident_id=incident.get("incident_id", incident_id),
+            resource_data=r_data,
+            extra={"assigned_resources": assigned_list, "actor": actor}
+        )
+
+        if updated_inc:
+            await broadcast_incident_updated(updated_inc)
 
         return AssignResourceResponse(
             incident_id=incident.get("incident_id", incident_id),
@@ -394,7 +406,7 @@ class ResourceMatcher:
         1. Resource status -> AVAILABLE
         2. Resource.current_incident_id -> null
         3. Incident.assigned_resources -> pulls resource_id if bound to an incident
-        4. WebSocket -> broadcasts RESOURCE_RELEASED
+        4. WebSocket -> broadcasts RESOURCE_AVAILABLE
         """
         now_utc = datetime.now(timezone.utc)
         from backend.app.websocket.manager import WebSocketEventType
@@ -421,6 +433,7 @@ class ResourceMatcher:
             }
         )
 
+        updated_inc = None
         if target_inc_id:
             inc_q = {"incident_id": target_inc_id}
             if ObjectId.is_valid(target_inc_id):
@@ -438,19 +451,29 @@ class ResourceMatcher:
                     "$push": {"timeline": timeline_entry}
                 }
             )
+            updated_inc = await db.incidents.find_one(inc_q)
 
-        # Broadcast WebSocket Event
-        await ws_manager.broadcast_event(
-            WebSocketEventType.RESOURCE_RELEASED,
-            {
-                "resource_id": resource.get("resource_id", resource_id),
-                "resource_name": resource.get("name"),
-                "category": resource.get("category"),
-                "new_status": "AVAILABLE",
-                "previous_incident_id": target_inc_id,
-                "actor": actor
-            }
+        from backend.app.services.realtime import (
+            broadcast_resource_available,
+            broadcast_incident_updated,
         )
+
+        r_data = {
+            "resource_id": resource.get("resource_id", resource_id),
+            "name": resource.get("name"),
+            "category": resource.get("category"),
+            "capabilities": resource.get("capabilities", []),
+            "status": "AVAILABLE",
+            "current_incident_id": None,
+        }
+        await broadcast_resource_available(
+            resource_id=resource.get("resource_id", resource_id),
+            resource_data=r_data,
+            previous_incident_id=target_inc_id
+        )
+
+        if updated_inc:
+            await broadcast_incident_updated(updated_inc)
 
         return ReleaseResourceResponse(
             resource_id=resource.get("resource_id", resource_id),

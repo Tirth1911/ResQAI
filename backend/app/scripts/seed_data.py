@@ -13,6 +13,32 @@ logger = logging.getLogger("resqai.seed_data")
 
 SAMPLE_RESOURCES = [
     {
+        "resource_id": "RES-DRN-RECON",
+        "name": "ResQ-Recon Thermal Drone Alpha",
+        "category": ResourceCategory.DISASTER_TEAM.value,
+        "status": ResourceStatus.AVAILABLE.value,
+        "capabilities": ["DRONE", "RECON", "THERMAL_IMAGING", "GAS_DETECTION"],
+        "location": {"type": "Point", "coordinates": [72.6369, 23.0850]},
+        "address": "Command HQ Helipad, Ahmedabad",
+        "location_name": "Command HQ Helipad",
+        "capacity": 1,
+        "current_incident_id": None,
+        "updated_at": datetime.now(timezone.utc)
+    },
+    {
+        "resource_id": "RES-108-CIVIL",
+        "name": "108 ALS Ambulance - Civil Hospital",
+        "category": ResourceCategory.AMBULANCE.value,
+        "status": ResourceStatus.AVAILABLE.value,
+        "capabilities": ["AMBULANCE", "ALS", "AED", "PARAMEDIC", "108"],
+        "location": {"type": "Point", "coordinates": [72.6025, 23.0512]},
+        "address": "Ahmedabad Civil Hospital, Asarwa",
+        "location_name": "Ahmedabad Civil Hospital",
+        "capacity": 3,
+        "current_incident_id": None,
+        "updated_at": datetime.now(timezone.utc)
+    },
+    {
         "resource_id": "RES-108-SOLA",
         "name": "108 Trauma Unit - Sola Civil",
         "category": ResourceCategory.AMBULANCE.value,
@@ -22,6 +48,32 @@ SAMPLE_RESOURCES = [
         "address": "Sola Civil Hospital, SG Highway, Ahmedabad",
         "location_name": "Sola Civil Hospital",
         "capacity": 4,
+        "current_incident_id": None,
+        "updated_at": datetime.now(timezone.utc)
+    },
+    {
+        "resource_id": "RES-NDRF-GANDHI",
+        "name": "6th Battalion NDRF Heavy Rescue Unit",
+        "category": ResourceCategory.DISASTER_TEAM.value,
+        "status": ResourceStatus.AVAILABLE.value,
+        "capabilities": ["HAZMAT", "HEAVY_RESCUE", "EXTRICATION", "DISASTER_TEAM"],
+        "location": {"type": "Point", "coordinates": [72.6369, 23.2156]},
+        "address": "Gandhinagar NDRF Base, Gujarat",
+        "location_name": "Gandhinagar NDRF Base",
+        "capacity": 12,
+        "current_incident_id": None,
+        "updated_at": datetime.now(timezone.utc)
+    },
+    {
+        "resource_id": "RES-FIR-NAVRANG",
+        "name": "Navrangpura Fire Engine 1",
+        "category": ResourceCategory.FIRE_TRUCK.value,
+        "status": ResourceStatus.AVAILABLE.value,
+        "capabilities": ["FIRE_TRUCK", "FOAM_TENDER", "HAZMAT", "INDUSTRIAL"],
+        "location": {"type": "Point", "coordinates": [72.5580, 23.0360]},
+        "address": "Navrangpura Fire Station, Ahmedabad",
+        "location_name": "Navrangpura Fire Station",
+        "capacity": 6,
         "current_incident_id": None,
         "updated_at": datetime.now(timezone.utc)
     },
@@ -49,32 +101,6 @@ SAMPLE_RESOURCES = [
         "location_name": "Naroda Fire Station",
         "capacity": 6,
         "current_incident_id": None,
-        "updated_at": datetime.now(timezone.utc)
-    },
-    {
-        "resource_id": "RES-DRN-GANDHI",
-        "name": "Drone Recon Alpha - Gandhinagar",
-        "category": ResourceCategory.DISASTER_TEAM.value,
-        "status": ResourceStatus.AVAILABLE.value,
-        "capabilities": ["DRONE", "RECON", "THERMAL_IMAGING", "GAS_DETECTION"],
-        "location": {"type": "Point", "coordinates": [72.6369, 23.2156]},
-        "address": "Gandhinagar Emergency Operations Center",
-        "location_name": "Gandhinagar Command Hub",
-        "capacity": 1,
-        "current_incident_id": None,
-        "updated_at": datetime.now(timezone.utc)
-    },
-    {
-        "resource_id": "RES-HAZ-VATVA",
-        "name": "HAZMAT Decon Unit 01 - Vatva",
-        "category": ResourceCategory.DISASTER_TEAM.value,
-        "status": ResourceStatus.BUSY.value,
-        "capabilities": ["HAZMAT", "CHEMICAL_NEUTRALIZATION", "DECONTAMINATION"],
-        "location": {"type": "Point", "coordinates": [72.6280, 22.9650]},
-        "address": "Vatva GIDC Industrial Emergency Station",
-        "location_name": "Vatva HAZMAT Center",
-        "capacity": 5,
-        "current_incident_id": "inc-001",
         "updated_at": datetime.now(timezone.utc)
     }
 ]

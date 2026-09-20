@@ -234,27 +234,37 @@ export interface AlertNotification {
 }
 
 export interface WebSocketEventPayload<T = any> {
+  event_id?: string;
   event:
+    | 'NEW_INCIDENT'
     | 'INCIDENT_CREATED'
     | 'INCIDENT_UPDATED'
     | 'INCIDENT_VERIFIED'
     | 'INCIDENT_RESOLVED'
     | 'INCIDENT_CLOSED'
-    | 'INCIDENT_DUPLICATED'
-    | 'INCIDENT_DUPLICATE_MERGED'
-    | 'INCIDENT_CLASSIFIED'
-    | 'INCIDENT_ESCALATED'
+    | 'DISPATCH_REQUIRED'
     | 'RESOURCE_CREATED'
     | 'RESOURCE_UPDATED'
+    | 'RESOURCE_DISPATCHED'
     | 'RESOURCE_ASSIGNED'
+    | 'RESOURCE_AVAILABLE'
     | 'RESOURCE_RELEASED'
     | 'RESOURCE_SHORTAGE'
+    | 'ALERT_CREATED'
     | 'ALERT_TRIGGERED'
     | 'NOTIFICATION_CREATED'
     | 'NOTIFICATION_UPDATED'
     | 'NOTIFICATIONS_ALL_READ'
+    | 'AI_ANALYSIS_UPDATED'
+    | 'INCIDENT_CLASSIFIED'
+    | 'DUPLICATE_DETECTED'
+    | 'INCIDENT_DUPLICATED'
+    | 'INCIDENT_DUPLICATE_MERGED'
+    | 'SYSTEM_STATUS_UPDATED'
+    | 'INCIDENT_ESCALATED'
     | 'CONNECTED'
-    | 'PONG';
+    | 'PONG'
+    | string;
   data?: T;
   incident_id?: string;
   resource_id?: string;

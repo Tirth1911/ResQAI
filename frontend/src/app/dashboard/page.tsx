@@ -12,6 +12,7 @@ import { resourceService } from '@/services/resourceService';
 import { hospitalService } from '@/services/hospitalService';
 import { notificationService } from '@/services/notificationService';
 import { useRealtimeEvents } from '@/hooks/useRealtimeEvents';
+import { useWebSocketContext } from '@/context/WebSocketContext';
 import { Incident, Resource, Hospital, AlertNotification, WebSocketEventPayload } from '@/types';
 
 export default function DashboardPage() {
@@ -27,40 +28,147 @@ export default function DashboardPage() {
   const [isDispatchModalOpen, setIsDispatchModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
-  // Real-time WebSocket Event Handler
+  // Tactical Routing & Simulation Interactive States
+  const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
+  const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [liveTelemetry, setLiveTelemetry] = useState<Record<string, { distanceKm: number; etaMin: number; arrived: boolean }>>({});
+
+  // Real-time WebSocket Event Handler with targeted in-memory state updates
   const handleWebSocketEvent = useCallback((payload: WebSocketEventPayload) => {
     const ev = payload.event;
-    if (
-      ev === 'INCIDENT_CREATED' ||
+    const data = (payload.data || {}) as any;
+
+    if (ev === 'NEW_INCIDENT' || ev === 'INCIDENT_CREATED') {
+      const inc = (data.incident_id ? data : { ...data, incident_id: payload.incident_id }) as Incident;
+      const incId = inc.incident_id || (inc as any)._id || (inc as any).id;
+      if (incId) {
+        setIncidents((prev) => {
+          const exists = prev.some((i) => i.incident_id === incId || i.id === incId);
+          if (exists) {
+            return prev.map((i) => (i.incident_id === incId || i.id === incId ? { ...i, ...inc } : i));
+          }
+          return [inc, ...prev];
+        });
+        setSelectedIncident((curr) => (!curr || inc.severity === 'CRITICAL' ? inc : curr));
+      }
+    } else if (
       ev === 'INCIDENT_UPDATED' ||
       ev === 'INCIDENT_VERIFIED' ||
-      ev === 'INCIDENT_RESOLVED' ||
-      ev === 'INCIDENT_CLOSED' ||
-      ev === 'INCIDENT_DUPLICATED' ||
-      ev === 'INCIDENT_DUPLICATE_MERGED' ||
       ev === 'INCIDENT_CLASSIFIED' ||
-      ev === 'INCIDENT_ESCALATED'
+      ev === 'AI_ANALYSIS_UPDATED'
     ) {
-      loadIncidents();
+      const incId = data.incident_id || payload.incident_id;
+      if (incId) {
+        setIncidents((prev) =>
+          prev.map((i) => (i.incident_id === incId || i.id === incId ? { ...i, ...data } : i))
+        );
+        setSelectedIncident((curr) =>
+          curr && (curr.incident_id === incId || curr.id === incId) ? { ...curr, ...data } : curr
+        );
+      }
+    } else if (ev === 'INCIDENT_RESOLVED' || ev === 'INCIDENT_CLOSED') {
+      const incId = data.incident_id || payload.incident_id;
+      if (incId) {
+        const newStatus = ev === 'INCIDENT_CLOSED' ? 'CLOSED' : 'RESOLVED';
+        setIncidents((prev) =>
+          prev.map((i) =>
+            i.incident_id === incId || i.id === incId ? { ...i, ...data, status: newStatus as any } : i
+          )
+        );
+        setSelectedIncident((curr) =>
+          curr && (curr.incident_id === incId || curr.id === incId)
+            ? { ...curr, ...data, status: newStatus as any }
+            : curr
+        );
+      }
+    } else if (ev === 'RESOURCE_UPDATED') {
+      const resId = data.resource_id || payload.resource_id;
+      if (resId) {
+        setResources((prev) =>
+          prev.map((r) => (r.resource_id === resId ? { ...r, ...data } : r))
+        );
+      }
+    } else if (ev === 'RESOURCE_DISPATCHED' || ev === 'RESOURCE_ASSIGNED') {
+      const resId = data.resource_id || payload.resource_id;
+      const targetIncId = data.incident_id || payload.incident_id;
+      if (resId) {
+        setResources((prev) =>
+          prev.map((r) =>
+            r.resource_id === resId
+              ? { ...r, ...data, status: 'BUSY', current_incident_id: targetIncId }
+              : r
+          )
+        );
+      }
+      if (targetIncId) {
+        setIncidents((prev) =>
+          prev.map((inc) => {
+            if (inc.incident_id === targetIncId || inc.id === targetIncId) {
+              const assigned = inc.assigned_resources || [];
+              const updatedAssigned =
+                resId && !assigned.includes(resId) ? [...assigned, resId] : assigned;
+              return {
+                ...inc,
+                assigned_resources: updatedAssigned,
+                status:
+                  inc.status === 'REPORTED' || inc.status === 'VERIFIED'
+                    ? 'DISPATCHED'
+                    : inc.status,
+              };
+            }
+            return inc;
+          })
+        );
+      }
+    } else if (ev === 'RESOURCE_AVAILABLE' || ev === 'RESOURCE_RELEASED') {
+      const resId = data.resource_id || payload.resource_id;
+      if (resId) {
+        setResources((prev) =>
+          prev.map((r) =>
+            r.resource_id === resId
+              ? { ...r, ...data, status: 'AVAILABLE', current_incident_id: undefined }
+              : r
+          )
+        );
+      }
     } else if (
-      ev === 'RESOURCE_CREATED' ||
-      ev === 'RESOURCE_UPDATED' ||
-      ev === 'RESOURCE_ASSIGNED' ||
-      ev === 'RESOURCE_RELEASED' ||
-      ev === 'RESOURCE_SHORTAGE'
-    ) {
-      loadResources();
-    } else if (
+      ev === 'ALERT_CREATED' ||
       ev === 'NOTIFICATION_CREATED' ||
-      ev === 'ALERT_TRIGGERED' ||
-      ev === 'NOTIFICATION_UPDATED' ||
-      ev === 'NOTIFICATIONS_ALL_READ'
+      ev === 'ALERT_TRIGGERED'
     ) {
-      loadAlerts();
+      const newAlert = data as AlertNotification;
+      setAlerts((prev) => {
+        const aId = newAlert.id || (newAlert as any)._id || newAlert.alert_id;
+        if (aId && prev.some((a) => a.id === aId || (a as any)._id === aId || a.alert_id === aId)) {
+          return prev;
+        }
+        return [newAlert, ...prev];
+      });
+    } else if (
+      ev === 'DUPLICATE_DETECTED' ||
+      ev === 'INCIDENT_DUPLICATED' ||
+      ev === 'INCIDENT_DUPLICATE_MERGED'
+    ) {
+      const targetIncId = data.matched_incident_id || payload.incident_id;
+      if (targetIncId) {
+        setIncidents((prev) =>
+          prev.map((inc) => {
+            if (inc.incident_id === targetIncId || inc.id === targetIncId) {
+              return {
+                ...inc,
+                duplicate_count: (inc.duplicate_count || 1) + 1,
+              };
+            }
+            return inc;
+          })
+        );
+      }
     }
   }, []);
 
   const { status: wsStatus, isConnected: wsConnected } = useRealtimeEvents(handleWebSocketEvent);
+  const { reconnectCount } = useWebSocketContext();
 
   // Load Incidents
   const loadIncidents = async () => {
@@ -124,11 +232,28 @@ export default function DashboardPage() {
     loadDashboardData(true);
   }, []);
 
-  // Auto-select inc-001 if no incident is selected
+  // Synchronize latest server state whenever WebSocket reconnects
   useEffect(() => {
-    if (!selectedIncident && incidents.length > 0) {
-      const inc001 = incidents.find((i) => i.incident_id === 'inc-001') || incidents[0];
-      setSelectedIncident(inc001);
+    if (reconnectCount > 0) {
+      console.log('[Dashboard] WebSocket reconnected. Synchronizing latest state from server...');
+      loadDashboardData(false);
+    }
+  }, [reconnectCount]);
+
+  // Auto-select inc-001 or sync selected incident with latest incident data
+  useEffect(() => {
+    if (incidents.length > 0) {
+      if (!selectedIncident) {
+        const inc001 = incidents.find((i) => i.incident_id === 'inc-001') || incidents[0];
+        setSelectedIncident(inc001);
+      } else {
+        const fresh = incidents.find(
+          (i) => i.incident_id === selectedIncident.incident_id || i.id === selectedIncident.id || (i as any)._id === (selectedIncident as any)._id
+        );
+        if (fresh && fresh.assigned_resources?.length !== selectedIncident.assigned_resources?.length) {
+          setSelectedIncident(fresh);
+        }
+      }
     }
   }, [incidents, selectedIncident]);
 
@@ -156,6 +281,8 @@ export default function DashboardPage() {
         availableResourcesCount={availableResources.length || 1}
         unreadAlertsCount={unreadAlerts.length || 2}
         onOpenNewIncidentModal={() => setIsReportModalOpen(true)}
+        onSimulate={() => setIsSimulating((prev) => !prev)}
+        isSimulating={isSimulating}
       />
 
       {/* STEP 12: Full-Height 3-Column Desktop Layout (responsive stack on mobile) */}
@@ -167,11 +294,21 @@ export default function DashboardPage() {
             resources={resources}
             hospitals={hospitals}
             selectedIncident={selectedIncident}
-            onSelectIncident={(inc) => setSelectedIncident(inc)}
+            onSelectIncident={(inc) => {
+              setSelectedIncident(inc);
+              setSelectedUnitId(null);
+            }}
             onAssignResource={(inc, res) => {
               setDispatchIncident(inc);
               setIsDispatchModalOpen(true);
             }}
+            hoveredUnitId={hoveredUnitId}
+            selectedUnitId={selectedUnitId}
+            onHoverUnit={(uId) => setHoveredUnitId(uId)}
+            onSelectUnit={(uId) => setSelectedUnitId(uId)}
+            isSimulating={isSimulating}
+            onToggleSimulate={() => setIsSimulating((prev) => !prev)}
+            onTelemetryUpdate={(tel) => setLiveTelemetry(tel)}
             className="w-full h-full"
           />
         </div>
@@ -179,10 +316,18 @@ export default function DashboardPage() {
         {/* Right (400px): Resource Status Summary & AI Situation Briefing / Detail Panel */}
         <RightCommandPanel
           selectedIncident={selectedIncident}
-          onSelectIncident={(inc) => setSelectedIncident(inc)}
+          onSelectIncident={(inc) => {
+            setSelectedIncident(inc);
+            setSelectedUnitId(null);
+          }}
           resources={resources}
           hospitals={hospitals}
           onIncidentUpdated={() => loadDashboardData(false)}
+          hoveredUnitId={hoveredUnitId}
+          selectedUnitId={selectedUnitId}
+          onHoverUnit={(uId) => setHoveredUnitId(uId)}
+          onSelectUnit={(uId) => setSelectedUnitId(uId)}
+          liveTelemetry={liveTelemetry}
           className="w-full lg:w-[400px] lg:min-w-[400px] lg:max-w-[400px] h-[380px] lg:h-full shrink-0"
         />
       </main>

@@ -168,8 +168,24 @@ async def update_resource(
     if not updated:
         raise HTTPException(status_code=404, detail=f"Resource '{resource_id}' not found")
 
-    await ws_manager.broadcast({
-        "event": "RESOURCE_UPDATED",
-        "data": updated
-    })
+    from backend.app.services.realtime import (
+        broadcast_resource_dispatched,
+        broadcast_resource_available,
+    )
+
+    new_st = str(updated.get("status", "")).upper()
+    if new_st in ["BUSY", "DISPATCHED", "EN_ROUTE"]:
+        await broadcast_resource_dispatched(
+            resource_id=resource_id,
+            incident_id=str(updated.get("current_incident_id") or ""),
+            resource_data=updated
+        )
+    elif new_st == "AVAILABLE":
+        await broadcast_resource_available(
+            resource_id=resource_id,
+            resource_data=updated
+        )
+    else:
+        await ws_manager.broadcast_event("RESOURCE_UPDATED", updated)
+
     return updated

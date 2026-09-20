@@ -109,15 +109,46 @@ async def create_incident(
 
         created = await DBService.create_incident(db, doc_data)
 
-        # Real-time WebSocket broadcast
-        await ws_manager.broadcast_event(WebSocketEventType.INCIDENT_CREATED, created)
+        # Real-time WebSocket broadcast: NEW_INCIDENT (and INCIDENT_CREATED)
+        from backend.app.services.realtime import (
+            broadcast_incident_created,
+            broadcast_dispatch_required,
+            broadcast_incident_escalated,
+            broadcast_incident_updated,
+            broadcast_incident_resolved,
+        )
+        await broadcast_incident_created(created)
+
+        # Broadcast DISPATCH_REQUIRED with AI/rule recommendations if active
+        try:
+            rec_ids = []
+            rec_res = await ResourceMatcher.recommend_resources_for_incident(
+                db, created["incident_id"], limit=3
+            )
+            if rec_res and rec_res.recommendations:
+                rec_ids = [r.resource_id for r in rec_res.recommendations]
+            
+            rec_reason = (
+                created.get("ai_analysis", {}).get("reasoning")
+                or f"Priority {created.get('priority', 'P1')} {created.get('type', 'EMERGENCY')} response required at scene."
+            )
+            await broadcast_dispatch_required(
+                incident_id=created["incident_id"],
+                required_resource_type=created.get("type", "FIRE"),
+                recommended_resource_ids=rec_ids,
+                priority=created.get("priority", "P1"),
+                location=created.get("address") or created.get("location"),
+                reason=rec_reason
+            )
+        except Exception as rec_err:
+            logger.debug(f"Could not compute initial dispatch recommendation: {rec_err}")
 
         # Check for incident escalation and generate in-app/SMS/Email notifications
         from backend.app.services.alert_service import AlertService
         await AlertService.evaluate_incident_alerts(db, created)
 
         if str(created.get("severity", "")).upper() == "CRITICAL" or str(created.get("priority", "")).upper() == "P1":
-            await ws_manager.broadcast_event(WebSocketEventType.INCIDENT_ESCALATED, created)
+            await broadcast_incident_escalated(created)
 
         return created
     except Exception as e:
@@ -523,7 +554,11 @@ async def resolve_incident(
             detail=f"Incident with ID '{incident_id}' not found."
         )
 
-    await ws_manager.broadcast_event(WebSocketEventType.INCIDENT_UPDATED, updated)
+    from backend.app.services.realtime import (
+        broadcast_incident_resolved,
+        broadcast_incident_updated,
+    )
+    await broadcast_incident_resolved(updated)
     return updated
 
 
@@ -558,5 +593,6 @@ async def close_incident(
             detail=f"Incident with ID '{incident_id}' not found."
         )
 
-    await ws_manager.broadcast_event(WebSocketEventType.INCIDENT_UPDATED, updated)
+    from backend.app.services.realtime import broadcast_incident_updated
+    await broadcast_incident_updated(updated)
     return updated
